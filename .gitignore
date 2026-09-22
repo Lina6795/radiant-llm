@@ -16,3 +16,9 @@ app/build/
 
 # Python 运行时（体积大且不变，不纳入版本管理）
 runtime/
+
+# 忽略这3个文档
+部署记录-无Docker运行.md
+RADIANT-Control_KimiCode并行执行手册.md
+RADIANT-Control_KimiCode分阶段执行计划.md
+
