@@ -41,6 +41,30 @@ def log_startup_paths() -> None:
     appendStreamEventLog("startup", f"log_dir={LOG_DIR}")
 
 
+@app.on_event("startup")
+def auto_initialize_model() -> None:
+    """Initialize the default chat model so /query works right after boot.
+
+    Set RADIANT_DEFAULT_MODEL (e.g. deepseek-v4-pro) to enable; empty = skip
+    (previous behaviour: model must be initialized via POST /initialize).
+    Runs in a daemon thread so /health stays responsive during model load.
+    """
+    model = (os.getenv("RADIANT_DEFAULT_MODEL") or "").strip()
+    if not model:
+        return
+
+    def _init() -> None:
+        try:
+            alerts = cb.initialize_models(model)
+            appendStreamEventLog("auto_init", f"model={model} ok")
+            print(f"[RADIANT-LLM] Auto-initialized model: {model}")
+        except Exception as exc:
+            appendStreamEventLog("auto_init_error", f"model={model} error={exc}")
+            print(f"[RADIANT-LLM] Auto-init failed for {model}: {exc}")
+
+    threading.Thread(target=_init, name="auto-init-model", daemon=True).start()
+
+
 @app.get("/health", tags=["system"])
 def healthcheck() -> Dict[str, Any]:
     return {"status": "ok"}
