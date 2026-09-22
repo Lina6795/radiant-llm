@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "radiant-llm"
+version = "0.1.0"
+description = "RADIANT-LLM: local Visual-RAG assistant for Nuclear Science and Engineering"
+readme = ""
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [
+  { name = "Zavier N. Ndum", email = "zavier.ndum@tamu.edu" }
+]
+dependencies = []
+
+[project.scripts]
+radiant-llm-api = "api:run"
+
+[tool.setuptools]
+py-modules = ["radiant_llm", "api"]
+packages = ["tools", "utils"]
+include-package-data = true
+

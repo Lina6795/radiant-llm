@@ -1,0 +1,39 @@
+basic_queries:
+  - What is RADIANT-LLM?
+  - How can RADIANT-LLM help the Nuclear Engineer/Student?
+  - What is radiation?
+  - Differentiate between ionizing and non-ionizing radiation.
+  - What is health physics?
+  - What are dose limits?
+  - What is ALARA?
+  - How do I calculate dose equivalent for the lungs?
+  - What is NRC 10CFR20?
+  - What are ISO 17025 and OSHA?
+  - How does the IAEA support Health Physicists?
+  - What is nuclear fission?
+  - What is a neutron?
+  - What is a nuclear reactor core?
+  - What is k-effective in a reactor?
+  - What is reactivity and how is it measured?
+  - What is a neutron moderator?
+  - What are control rods?
+  - What is decay heat?
+  - What is a thermal reactor and what is a fast reactor?
+  - What is a Generation IV (Gen-IV) reactor?
+  - What is a Small Modular Reactor (SMR)?
+  - What is a coolant in a nuclear reactor?
+  - What is a containment building?
+  - What is reactor SCRAM and what is its historical origin?
+  - What is a reactor trip?
+  - What is a fuel cycle?
+  - What is spent nuclear fuel?
+  - What is criticality safety?
+  - What is probabilistic risk assessment (PRA)?
+  - What is defense-in-depth in nuclear safety?
+  - What is nuclear safeguards?
+  - What is nuclear security?
+  - What is source term in an accident analysis?
+  - What are RADIANT-LLM skills?
+  - How do I use skills in RADIANT-LLM?
+  - How do bundled and external skills differ?
+  - How do I create my own user skills?

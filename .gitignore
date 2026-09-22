@@ -1,0 +1,18 @@
+# 密钥不进版本库
+Docker_Executable/.env
+
+# 运行产物
+radiant-llm.pid
+radiant-llm.out.log
+app/RADIANT_LLM_Logs/
+Docker_Executable/RADIANT_LLM_Logs/
+Docker_Executable/RADIANT_LLM_Sessions/
+
+# 自动生成
+__pycache__/
+*.pyc
+app/radiant_llm.egg-info/
+app/build/
+
+# Python 运行时（体积大且不变，不纳入版本管理）
+runtime/

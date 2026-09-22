@@ -1,0 +1,13 @@
+/* assets/markdown_styles.css */
+
+.markdown-body ul {
+  margin-left: 1.5rem;
+  list-style-type: disc;
+}
+.markdown-body p {
+  margin-bottom: 0.75rem;
+}
+.markdown-body a {
+  color: #2563eb;  /* tailwind’s blue-600 */
+}
+
