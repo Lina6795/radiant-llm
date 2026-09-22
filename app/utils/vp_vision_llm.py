@@ -85,7 +85,13 @@ def call_vision_llm_gpt(
     if not api_key:
         raise RuntimeError("OpenAI API key is not set.")
 
-    client = OpenAI(api_key=api_key)
+    # Vision calls may target a different OpenAI-compatible endpoint than the
+    # chat chain (e.g. chat via DeepSeek, vision via DashScope/qwen-vl):
+    # VISUAL_PARSER_OPENAI_BASE_URL / VISUAL_PARSER_OPENAI_API_KEY override.
+    client = OpenAI(
+        api_key=os.environ.get("VISUAL_PARSER_OPENAI_API_KEY") or api_key,
+        base_url=os.environ.get("VISUAL_PARSER_OPENAI_BASE_URL") or None,
+    )
 
     # Build the multimodal message content
     content = [{"type": "text", "text": prompt}]

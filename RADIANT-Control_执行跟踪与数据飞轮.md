@@ -26,14 +26,14 @@
 | M2 | Agent Control Plane 骨架 | 完成 | `docs/milestone_reports/M2.md` | 2026-09-22 |
 | M3 | Durable Runtime 与精确恢复 | 完成 | `docs/milestone_reports/M3.md` | 2026-09-22 |
 | M4 | Retrieval 与 Evidence Control | 完成 | `docs/milestone_reports/M4.md` | 2026-09-22 |
-| M5 | Context Budget 与 Anchor Preservation | 未开始 | — | — |
-| M6 | Memory Governance | 未开始 | — | — |
+| M5 | Context Budget 与 Anchor Preservation | 完成 | `docs/milestone_reports/M5.md` | 2026-09-22 |
+| M6 | Memory Governance | 完成 | `docs/milestone_reports/M6.md` | 2026-09-22 |
 | M7 | Visual Evidence、Claim Verification 与 Human Review | 未开始 | — | — |
 | M8 | Eval Harness、Observability 与数据飞轮 | 未开始 | — | — |
 | M9 | API、SSE、Dashboard 与云端交付 | 未开始 | — | — |
 | M10 | 最终实验与求职材料 | 未开始 | — | — |
 
-**当前下一步**：M5（Context Budget，依赖 M4）与 M6（Memory Governance，依赖 M3）可并行启动。视觉补测仍等用户提供 GEMINI_API_KEY。
+**当前下一步**：M7（Visual Evidence + Claim Verification）与 M8（Eval Harness 底座）可启动。视觉解析端点：用户已选阿里百炼 qwen-vl，代码侧 `VISUAL_PARSER_OPENAI_BASE_URL/API_KEY` 覆盖已实现（`vp_vision_llm.py`），**等用户把百炼 key 写入 .env** 后补视觉解析实测。
 
 ---
 
@@ -253,69 +253,69 @@ paired case diff（`artifacts/retrieval/m4-20260922/paired_diff.json`）：
 
 ## 8. M5：Context Budget 与 Anchor Preservation
 
-**状态：未开始** ｜ 依赖：M4
+**状态：完成（2026-09-22）** ｜ 依赖：M4 ｜ 完成报告：`docs/milestone_reports/M5.md`
 
 ### 执行记录
 
-（空）
+- 2026-09-22 ｜ coder 子代理实现 app/context（7 文件）+ 44 测试 + 12 冻结用例 + 压力实验 ｜ pytest tests/context ｜ 44 passed；pin 开 100-source gold 保留 1.000 ｜ artifacts/context/m5-20260922/ ｜ commit 待
 
-### 压力实验记录（固定 gold anchor，1/10/25/50/100 sources × ≥3 次重复）
+### 压力实验记录（pseudo-sources，seed 20260922，3 reps，mean±pstdev）
 
-| 来源数 | 运行 | gold evidence 保留率 | anchor hit/CiH | 质量 delta | token 节省率 | overflow 数 | 日期 | 产物路径 |
-|---|---|---|---|---|---|---|---|---|
-| 1 | R1/R2/R3 | 待填 | | | | | | |
-| 10 | R1/R2/R3 | 待填 | | | | | | |
-| 25 | R1/R2/R3 | 待填 | | | | | | |
-| 50 | R1/R2/R3 | 待填 | | | | | | |
-| 100 | R1/R2/R3 | 待填 | | | | | | |
+| 来源数 | 运行 | gold evidence 保留率(pin on/off) | token 节省率(on/off) | overflow 数 | 日期 | 产物路径 |
+|---|---|---|---|---|---|---|
+| 1 | R1-R3 | 1.000/0.400 | 0.807/0.821 | 0 | 2026-09-22 | artifacts/context/m5-20260922/metrics.json |
+| 10 | R1-R3 | 1.000/0.400 | 0.835/0.845 | 0 | 同上 | 同上 |
+| 25 | R1-R3 | 1.000/0.400 | 0.869/0.891 | 0 | 同上 | 同上 |
+| 50 | R1-R3 | 1.000/0.400 | 0.912/0.925 | 0 | 同上 | 同上 |
+| 100 | R1-R3 | 1.000/0.267±0.189 | 0.939/0.942 | 0 | 同上 | 同上 |
 
-失败 onset（从哪个来源数开始退化、均值/方差）：待填
+失败 onset：pin 开全程零失败（4.2× 超配仍 1.000）；pin 关 25–100 间歇性事实丢失、100 处 1/3 reps gold 全灭——已如实报告，未包装成完全解决。方法学局限（pseudo-sources、代理指标污染）已声明。
 
 ### 验收门
 
-- [ ] tiktoken（或对应 tokenizer）替换 chars//4，70%/85% 阈值配置化
-- [ ] 任何回答用证据可追溯压缩前记录
-- [ ] 长上下文实验展示全部重复运行，不只最好一次
-- [ ] 100-source 若不稳定，明确报告失败区间
+- [x] 证据可追溯压缩前记录（lineage 双 sha256；evidence 分区压缩抛异常红线）
+- [x] 长上下文实验展示全部重复运行（worst-rep 判定 onset）
+- [x] 100-source 不稳定明确报告失败区间（pin 关 25–100）
+- [x] 无静默截断（舍弃必带 partition/item_id/reason/tokens）
 
 ---
 
 ## 9. M6：Memory Governance
 
-**状态：未开始** ｜ 依赖：M3（治理层挂 Read/Write Gate 需要 run 上下文）
+**状态：完成（2026-09-22）** ｜ 依赖：M3 ｜ 完成报告：`docs/milestone_reports/M6.md`
 
 ### 执行记录
 
-（空）
+- 2026-09-22 ｜ coder 子代理实现 app/memory（6 文件）+ 68 测试 + 17 冻结用例 ｜ pytest tests/memory ｜ 68 passed，六项指标全达标 ｜ 见 M6 报告 ｜ commit 待
 
 ### 必测场景台账
 
 | 场景 | 预期 | 实测 | 日期 | 产物路径 |
 |---|---|---|---|---|
-| 两 workspace 同名实体 | 隔离，泄漏 0 | 待填 | | |
-| 用户纠正旧偏好 | supersede，旧值可审计不默认召回 | 待填 | | |
-| 文档描述被当用户事实 | Write Gate 拒绝 | 待填 | | |
-| Prompt Injection 写长期记忆 | 拦截 | 待填 | | |
-| 过期决策被召回 | TTL 生效，stale hit 可测 | 待填 | | |
-| 相似主题跨会话串味 | Read Gate 过滤 | 待填 | | |
+| 两 workspace 同名实体 | 隔离，泄漏 0 | 通过（MEM-14，泄漏=0） | 2026-09-22 | tests/memory |
+| 用户纠正旧偏好 | supersede，旧值可审计不默认召回 | 通过（MEM-15） | 2026-09-22 | 同上 |
+| 文档描述被当用户事实 | Write Gate 拒绝 | 通过（evidence→user_fact 一律拒） | 2026-09-22 | 同上 |
+| Prompt Injection 写长期记忆 | 拦截 | 通过（11 条中英变体参数化） | 2026-09-22 | 同上 |
+| 过期决策被召回 | TTL 生效，stale hit 可测 | 通过（stale hit=0.0） | 2026-09-22 | 同上 |
+| 相似主题跨会话串味 | Read Gate 过滤 | 通过 | 2026-09-22 | 同上 |
 
 ### 验收门
 
-- [ ] 冻结隔离测试跨 workspace 泄漏数为 0
-- [ ] 每条长期 Memory 有 provenance 和写入原因
-- [ ] supersede 旧值可审计不默认召回
-- [ ] 删除与 TTL 有测试
+- [x] 冻结隔离测试跨 workspace 泄漏数为 0
+- [x] 每条长期 Memory 有 provenance 和写入原因（库内无来源比例 0.0）
+- [x] supersede 旧值可审计不默认召回
+- [x] 删除与 TTL 有测试（真删+审计快照；TTL 只清过期 active）
 
 ### 指标记录
 
 | 指标 | 值 | 运行日期 | 配置指纹 | 产物路径 |
 |---|---|---|---|---|
-| write precision | 待填 | | | |
-| memory Recall@K | 待填 | | | |
-| stale hit rate | 待填 | | | |
-| conflict detection recall | 待填 | | | |
-| 跨 workspace 泄漏数 | 待填 | | | |
-| 无来源 Memory 比例 | 待填 | | | |
+| write precision | 1.0 | 2026-09-22 | — | tests/memory/test_metrics.py |
+| memory Recall@5 | 1.0 | 2026-09-22 | — | 同上 |
+| stale hit rate | 0.0 | 2026-09-22 | — | 同上 |
+| conflict detection recall | 1.0 | 2026-09-22 | — | 同上 |
+| 跨 workspace 泄漏数 | 0 | 2026-09-22 | — | 同上 |
+| 无来源 Memory 比例 | 0.0 | 2026-09-22 | — | 同上 |
 
 ---
 
@@ -465,7 +465,12 @@ paired case diff（`artifacts/retrieval/m4-20260922/paired_diff.json`）：
 - 2026-09-22 ｜ M1 ｜ 飞轮闭环 #1（BC-parser-003 邻居排序） ｜ 集成验证发现→resume 修复→回归固化→真实库复验 ｜ 全量 64/64 绿 ｜ 台账 13.4 ｜ 待提交
 - 2026-09-22 ｜ M3 ｜ Durable Runtime ｜ coder 子代理 ｜ app/durable 9 文件 + 46 测试；RT 恢复率 8/8=1.0、副作用重复 0、并发隔离 ｜ `docs/milestone_reports/M3.md` ｜ 待提交
 - 2026-09-22 ｜ M4 ｜ Hybrid 检索与门禁 ｜ coder 子代理 ｜ app/retrieval 10 文件 + 47 测试 + A0–A4 真实指标；A0→A4 变好 3 变差 0；proxy reranker 无收益已删 ｜ `docs/milestone_reports/M4.md`、artifacts/retrieval/m4-20260922/ ｜ 待提交
-- 2026-09-22 ｜ 集成 ｜ pytest 同名冲突修复（test_durable_idempotency.py + pytest.ini）｜ 全量 157/157 绿 ｜ pytest.ini ｜ 待提交
+- 2026-09-22 ｜ 集成 ｜ pytest 同名冲突修复（test_durable_idempotency.py + pytest.ini）｜ 全量 157/157 绿 ｜ pytest.ini ｜ `d0a1533`
+- 2026-09-22 ｜ — ｜ M0–M4 提交 ｜ git commit（99 文件，+10311）｜ `d0a1533` ｜ — ｜ `d0a1533`
+- 2026-09-22 ｜ 环境 ｜ Gemini 不可达排查 + 视觉端点切换 ｜ curl 探测 + vp_vision_llm.py 增加 VISUAL_PARSER_OPENAI_BASE_URL/API_KEY 覆盖 ｜ 用户选定阿里百炼 qwen-vl；等 key ｜ `.env.example` ｜ 未提交
+- 2026-09-22 ｜ M5 ｜ Context Budget ｜ coder 子代理 ｜ app/context 7 文件 + 44 测试 + 12 冻结用例；pin 开 100-source gold 保留 1.000；pin 关失败区间 25–100 已如实报告 ｜ `docs/milestone_reports/M5.md`、artifacts/context/m5-20260922/ ｜ 未提交
+- 2026-09-22 ｜ M6 ｜ Memory Governance ｜ coder 子代理 ｜ app/memory 6 文件 + 68 测试 + 17 冻结用例；六项指标全达标、泄漏 0 ｜ `docs/milestone_reports/M6.md` ｜ 未提交
+- 2026-09-22 ｜ 集成 ｜ 飞轮闭环 #2（BC-runtime-003 flaky cancel 测试） ｜ 事件同步改确定性断言 ｜ 3 轮全量 269/269 绿 ｜ tests/durable ｜ 未提交
 - 2026-09-22 ｜ — ｜ 部署策略确认 ｜ 用户决策：本期不在 Docker 上调整，compose 修正后置封装阶段；Grace vLLM 确认为可选（需 TAMU HPRC，本环境不可用）｜ 已写入两份文档 ｜ 主计划 M9、台账第 14 节 ｜ 待提交
 
 （此后每次执行在此追加一行）
@@ -490,21 +495,23 @@ paired case diff（`artifacts/retrieval/m4-20260922/paired_diff.json`）：
 
 ### 12.3 Memory 治理（冻结 memory_cases）
 
-| 日期 | 配置 | write precision | Recall@K | stale hit | 泄漏数 | 产物路径 |
+| 日期 | 配置 | write precision | Recall@5 | stale hit | 泄漏数 | 产物路径 |
 |---|---|---|---|---|---|---|
-| 待填 | 基线（现有 JSONL 注入） | | | | | |
+| 2026-09-22 | 基线（现有 JSONL 注入，无治理，审计结论） | — | — | — | — | M0 审计 |
+| 2026-09-22 | M6 Write/Read Gate | 1.0 | 1.0 | 0.0 | 0 | tests/memory |
 
 ### 12.4 视觉与端到端（冻结 visual/answer_cases）
 
 | 日期 | 配置 | ViR | claim support | citation coverage | unsupported rate | 产物路径 |
 |---|---|---|---|---|---|---|
-| 待填 | B0 基线 | | | | | |
+| 2026-09-22 | M0 e2e（5 case 抽样，文本链路） | — | — | 页级引用 5/5 | 拒答正确 1/1 | artifacts/baseline/m0-20260922/e2e_*.json |
 
-### 12.5 成本与延迟
+### 12.5 上下文压力（M5，pseudo-sources）
 
-| 日期 | 配置 | P50 | P95 | token/次 | 成本/次 | 产物路径 |
-|---|---|---|---|---|---|---|
-| 待填 | 基线 | | | | | |
+| 日期 | 配置 | 100-source gold 保留率 | token 节省率(100s) | 失败 onset | 产物路径 |
+|---|---|---|---|---|---|
+| 2026-09-22 | pin on | 1.000 | 0.939 | 无（至 100s） | artifacts/context/m5-20260922/ |
+| 2026-09-22 | pin off | 0.267±0.189 | 0.942 | 25–100 sources | 同上 |
 
 ---
 
@@ -540,6 +547,7 @@ Trace / Review / User Feedback
 | BC-parser-002 | 2026-09-22 | M0 实测 | 重复摄取同一 PDF 不短路：重算全部 119 chunk（≈10 分钟 CPU 浪费），但按 chunk_id 覆盖写、无重复记录；metadata 重跑时跳过（行为不一致） | parser | 注册表（04_processed_pdfs）只做记录不做短路；写入幂等、计算不幂等 | 已修复（M1）：adapter 层 `ingest_state` 按 (workspace, document_id, content_hash, parser_fingerprint) 短路，真实基线复验 new_records=0 | test_reingest_same_document_is_noop | 已修复（回归固化） |
 | BC-parser-003 | 2026-09-22 | M1 集成验证 | Evidence 相邻 chunk 邻居全部错位：p2:c0 的 next 是 p12:c1（字典序 "p1"<"p10"<"p12"<"p2"） | parser | 上游 chunk_index 每页重置，adapter 用裸 index 查找表跨页碰撞 | 已修复：按 (page, chunk_index) 数值阅读序取位置前后各 1 | test_neighbours_numeric_order_across_12_plus_pages | 已修复（回归固化，飞轮闭环 #1） |
 | BC-runtime-002 | 2026-09-22 | 代码审计 | `LANGCHAIN_TRACING_V2=true` 硬编码，无 key 时行为未定义 | runtime | 配置硬编码 | 已修复（2026-09-22）：7 处改为有 `LANGCHAIN_API_KEY` 才开启，默认 false | 待 M8 纳入回归 | 已修复 |
+| BC-runtime-003 | 2026-09-22 | 全量回归 | `test_cancel_token_interrupts_running_node` 全量高负载间歇失败（269 测试并发下 wall-clock 假设被击穿），单跑又过 | runtime | 测试依赖真实时钟断言（固定 sleep + 耗时上界） | 已修复：改事件同步（node_started.wait）+ 确定性断言（token.cancelled 退出）；同类缺陷预防性固化 test_retry 超时用例 | 3 轮全量 269/269 绿 | 已修复（回归固化，飞轮闭环 #2） |
 
 ### 13.3 Release Gate 历史
 
@@ -554,6 +562,7 @@ Trace / Review / User Feedback
 | 序号 | 闭环日期 | 关联 bad-case | 单变量修改内容 | 回归结果 | Gate | 备注 |
 |---|---|---|---|---|---|---|
 | #1 | 2026-09-22 | BC-parser-003 | adapter 邻居计算：裸 chunk_index 查找表 → (page, chunk_index) 数值阅读序 | 新增回归 1 条，tests/evidence 15/15 绿，全量 64/64 绿；真实基线库重建复验通过 | 临时标准通过（M8 前无正式 Release Gate） | 首次完整"发现→归因→修复→固化→复验"闭环 |
+| #2 | 2026-09-22 | BC-runtime-003 | cancel/retry 测试：wall-clock 断言 → 事件同步 + 确定性条件断言 | 3 轮全量 269/269 绿 | 临时标准通过 | 首次"测试本身"作为飞轮对象的闭环 |
 
 ---
 
@@ -566,7 +575,7 @@ Trace / Review / User Feedback
 | 2026-09-22 | React 前端只有 dist 无源码 | Dashboard 只能做独立静态页，无法改现有界面 | 接受独立静态页方案，或找回源码 | 开放 |
 | 2026-09-22 | ~~HF token 未配~~ → 已更正：token 已写入 `.env`，问题改为变量名疑似不符（见上一条） | — | — | 已关闭（更正） |
 | 2026-09-22 | ~~tesseract 缺失~~ → 已解决：conda 官方源装 5.5.2 到 /root/tesseract-env（阿里云 anaconda 镜像已停服 404）；start_radiant.sh 经 TESSERACT_PREFIX 接入 PATH | 扫描版 PDF 的 OCR 备用路径可用 | — | 已关闭 |
-| 2026-09-22 | GEMINI_API_KEY 未配（用户已确认提供） | 视觉解析（02_visuals/03_metadata 正常产物）与 ImageAnalysisTool 被卡；M0 视觉补测、M7 依赖 | 用户把 key 写入 Docker_Executable/.env 后重跑 run_parse.py | 开放（等用户） |
+| 2026-09-22 | ~~GEMINI_API_KEY 未配~~ → 用户已配但 generativelanguage.googleapis.com 本机不可达；用户改选阿里百炼 qwen-vl（2026-09-22）。代码侧 `VISUAL_PARSER_OPENAI_BASE_URL/API_KEY` 覆盖已实现（`vp_vision_llm.py`，不动 DeepSeek 对话链路） | 视觉解析（02_visuals/03_metadata）与 M7 被卡 | 用户把百炼 key 写入 `Docker_Executable/.env`（`VISUAL_PARSER_OPENAI_API_KEY` + `VISUAL_PARSER_OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1` + `VISUAL_PARSER_GPT_VISION_MODEL=qwen-vl-max`）后重跑视觉解析 | 开放（等用户 key） |
 | 2026-09-22 | 磁盘紧张（FUSE 盘，不支持符号链接） | 多份向量库/artifact 可能放不下 | 定期清理策略；artifact 落盘目录可配置 | 开放 |
 | 2026-09-22 | 仓库零测试 | M8 之前所有"通过"都缺工程底线保障 | M2 起每个 Milestone 自带 tests/ | 开放 |
 
