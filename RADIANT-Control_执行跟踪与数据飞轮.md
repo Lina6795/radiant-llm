@@ -1,0 +1,581 @@
+# RADIANT-Control 执行跟踪与数据飞轮
+
+> 本文件是**执行台账**，与《RADIANT-Control_KimiCode分阶段执行计划.md》（下称"主计划"）配套使用。  
+> 主计划定义"做什么、怎么验收"；本文件记录"实际做了什么、结果是什么、数据飞轮转到哪了"。  
+> 创建：2026-09-22 ｜ 仓库基线：commit `051d0b8`（fork：技能库 + 会话管理 + Grace vLLM 增量，上游 `zev94/radiant-llm` 原版）
+
+## 0. 使用规则（Kimi Code 与维护者共同遵守）
+
+1. **只追加，不删改历史。** 执行记录、bad-case、Release Gate 历史写错就追加更正条目，禁止覆盖旧记录——台账本身就是审计证据。
+2. 每次执行结束（无论成败）必须当场更新三处：对应 Milestone 的【执行记录】、第 11 节【执行日志】、涉及指标时更新第 12 节【指标总表】。
+3. 每个条目的最小字段：**日期 / 操作 / 命令 / 结果 / 产物路径 / commit**。没有 commit 的实验结果不算数。
+4. 状态值统一：`未开始` / `进行中` / `完成` / `受阻` / `已放弃`（放弃必须写明原因）。
+5. 所有数字必须能回到 `artifacts/` 下的结果文件或 `benchmarks/` 下的冻结 case；凭印象填的数字视为伪造，发现即作废该条目。
+6. 数据飞轮（第 13 节）的每次转动必须满足：单变量修改、失败已归因、修复已固化为 regression case、Release Gate 通过。
+7. 验收门全部勾选才算 Milestone 完成；完成后把主计划"Milestone Mx 完成报告"全文存入 `docs/milestone_reports/Mx.md`，此处只挂链接。
+8. 受阻（`受阻`）超过一轮必须在第 14 节【风险与债务】登记，并写明解锁条件。
+
+---
+
+## 1. 总进度看板
+
+| Milestone | 内容 | 状态 | 完成报告 | 验收通过日期 |
+|---|---|---|---|---|
+| M0 | 仓库审计、环境修复、可复现 Baseline | 完成（视觉补测遗留转 M1 前置，等 GEMINI_API_KEY） | `docs/milestone_reports/M0.md` | 2026-09-22 |
+| M1 | Evidence Schema 与解析产物 Adapter | 完成 | `docs/milestone_reports/M1.md` | 2026-09-22 |
+| M2 | Agent Control Plane 骨架 | 完成 | `docs/milestone_reports/M2.md` | 2026-09-22 |
+| M3 | Durable Runtime 与精确恢复 | 完成 | `docs/milestone_reports/M3.md` | 2026-09-22 |
+| M4 | Retrieval 与 Evidence Control | 完成 | `docs/milestone_reports/M4.md` | 2026-09-22 |
+| M5 | Context Budget 与 Anchor Preservation | 未开始 | — | — |
+| M6 | Memory Governance | 未开始 | — | — |
+| M7 | Visual Evidence、Claim Verification 与 Human Review | 未开始 | — | — |
+| M8 | Eval Harness、Observability 与数据飞轮 | 未开始 | — | — |
+| M9 | API、SSE、Dashboard 与云端交付 | 未开始 | — | — |
+| M10 | 最终实验与求职材料 | 未开始 | — | — |
+
+**当前下一步**：M5（Context Budget，依赖 M4）与 M6（Memory Governance，依赖 M3）可并行启动。视觉补测仍等用户提供 GEMINI_API_KEY。
+
+---
+
+## 2. 环境与基线台账
+
+实验结果只在登记过的环境上有效。环境变化（换机、换模型、换 key、升依赖）必须追加新行，旧行保留。
+
+| 登记日期 | 机器/容器 | CPU/内存/GPU | Python | LLM/VLM 配置 | Embedding | 已知缺陷 | 备注 |
+|---|---|---|---|---|---|---|---|
+| 2026-09-22 | 无特权云容器（Docker 不可用） | 待实测补充 | runtime/bin/python3.12（镜像解包） | OpenAI/Gemini API 为主用路径；Grace vLLM 为可选项（需 TAMU HPRC SSH 隧道，本环境不可用，见第 14 节） | `RADIANT_EMBEDDING_PROVIDER` 可切 openai/google/local(bge-base-en-v1.5) | huggingface.co 直连超时，已配 `HF_ENDPOINT=https://hf-mirror.com`（2026-09-22 验证可登录、nougat-small 在镜像上存在）；tesseract 缺失；FUSE 盘不支持符号链接；磁盘紧张 | 初始环境 |
+
+### 2.1 配置指纹规则
+
+每次出指标的运行，在产物目录写 `config_fingerprint.json`：`{git_commit, 模型+版本, prompt 文件 hash, 检索配置, 数据版本, 环境行号}`。指纹缺失的结果不进指标总表。
+
+---
+
+## 3. M0：仓库审计、环境修复与可复现 Baseline
+
+**状态：进行中**
+
+### 执行记录
+
+- 2026-09-22 ｜ 全仓库代码审计 ｜ explore 审计（无命令产物）｜ 完成：确认无控制层（`radiant_llm.py:2027` 直进 AgentExecutor）、全局单例（`:2220`）、纯 dense 检索（`pdf_helpers.py:236-250`）、零测试零指标、chars//4 预算（`:669-682`）、PythonREPL 无沙箱、LangSmith 硬编码（`:180`）、compose 写死 `/mnt/lina`；产出主计划 v2 ｜ commit `051d0b8`（审计结论写入计划文档，代码未动）
+- 2026-09-22 ｜ HF 环境修复 ｜ `vp_nougat_engine.py` 接受 HF_API_KEY；`.env` 配 HF_ENDPOINT 镜像 ｜ whoami 登录成功（lina0819）｜ 待提交
+- 2026-09-22 ｜ LangSmith 条件化 ｜ 7 处硬编码改"有 key 才开" ｜ 全部编译通过，默认关闭 ｜ 待提交
+- 2026-09-22 ｜ tesseract ｜ conda defaults 渠道装到 /root/tesseract-env（阿里云 anaconda 镜像已停服 404，官方源可达）｜ tesseract 5.5.2 可用，已接入 start_radiant.sh PATH ｜ 待提交
+- 2026-09-22 ｜ DeepSeek 对话接入 ｜ radiant_llm.py 新增 deepseek 分支 + 模型清单 ｜ `/initialize deepseek-v4-pro` 成功 ｜ 待提交
+- 2026-09-22 ｜ Nougat 最小解析 ｜ `artifacts/baseline/m0-20260922/run_parse.py` ｜ 615.4s/15页（≈41s/页 CPU），119 chunk 全部 extractor=nougat，未降级；视觉阶段 16 条 ERROR（DeepSeek 无视觉+模型名不符，预期内）｜ `parse_run_summary.json`、`config_fingerprint.json` ｜ 待提交
+- 2026-09-22 ｜ schema profiling ｜ `schema_profile.py` ｜ 01 表 7 字段 100% 填充、15 页全覆盖；02 未生成；03 为 _error 记录（失败隔离有效）｜ `schema_profile.json` ｜ 待提交
+- 2026-09-22 ｜ 摄取幂等性实测 ｜ 重复 run_pipeline ｜ 不短路（重算 119 chunk）但按 chunk_id 覆盖写、0 重复记录 → BC-parser-002 ｜ 本文件 ｜ 待提交
+- 2026-09-22 ｜ 端到端实测 ｜ POST /initialize → /directory → /query ｜ DeepSeek→PDFReaderTool→Chroma(本地bge)→页级sources→带引用回答全链路真实跑通 ｜ `e2e_BL-*.json` ｜ 待提交
+- 2026-09-22 ｜ agent 预算配置化 ｜ 3 常量改 RADIANT_AGENT_* 环境变量 ｜ 默认值不变、编译通过 ｜ `docs/HARDCODED_CONFIG_REGISTRY.md` ｜ 待提交
+
+### 待办清单（M0 关闭前必须全部完成）
+
+- [x] 环境修复：HF 变量名兼容 + HF_ENDPOINT 镜像（登录实测通过）
+- [x] 环境修复：tesseract 5.5.2 安装并接入 PATH
+- [x] `LANGCHAIN_TRACING_V2` 改配置项，默认关闭
+- [x] 1 份公开含图表 PDF 跑最小解析，记录命令/模型/耗时/成本/输出（attention 15页，615.4s）
+- [x] 明确解析路径：Nougat 实测可用，extractor 字段可证，未降级
+- [x] `01_chunks/02_visuals/03_metadata` schema profiling（02 因视觉 API 缺失未生成，等 Gemini key 补测）
+- [x] `benchmarks/baseline_cases.jsonl`：12 条（5 文本/3 数字/2 图表/2 拒答）
+- [x] `POST /query` 实测 query → evidence → answer → citation 全链路
+- [x] 写死路径配置化/登记（`docs/HARDCODED_CONFIG_REGISTRY.md`）
+- [x] 交付物：`docs/BASELINE.md`、`docs/UPSTREAM_AUDIT.md`、`docs/OWNERSHIP.md`、`docs/adr/0001-project-boundary.md`、`configs/baseline.yaml`、`artifacts/baseline/m0-20260922/`
+- [ ] 视觉链路补测（`GEMINI_API_KEY` 到位后重跑 run_parse.py 验证 02/03 正常产物）→ 转入 M1 前置
+
+### 验收门
+
+- [x] 同一命令可再次产生结构一致的解析结果（重复运行 119 条、schema 一致、chunk_id 无重复）
+- [x] 解析路径（Nougat）明确记录且可复现（extractor 字段 + config_fingerprint.json）
+- [x] 至少一个 Evidence 能回到 PDF 页码（e2e sources 页级：Page 1 Chunk 2 等）
+- [x] 每项失败已归类：视觉调用失败→parser(VLM)层；摄取不短路→parser 层（BC-parser-002）
+- [x] 无论文数字冒充本项目成绩
+
+### 指标记录（M0 基线值，后续 Milestone 的对照原点）
+
+| 指标 | 值 | 运行日期 | 配置指纹 | 产物路径 |
+|---|---|---|---|---|
+| 解析路径 | nougat（未降级） | 2026-09-22 | `config_fingerprint.json` | artifacts/baseline/m0-20260922/ |
+| 单 PDF 解析耗时 | 615.4s（15 页 ≈ 41s/页，CPU） | 2026-09-22 | 同上 | parse_run_summary.json |
+| chunk 数 / 字段填充率 | 119 / 100% | 2026-09-22 | 同上 | schema_profile.json |
+| 视觉记录生成 | 0（DeepSeek 无视觉，等 Gemini） | 2026-09-22 | 同上 | parse_run.log |
+| 端到端链路 | 跑通（详见逐 case 结果，本节下方执行记录） | 2026-09-22 | 同上 | e2e_BL-*.json |
+
+---
+
+## 4. M1：Evidence Schema 与解析产物 Adapter
+
+**状态：完成（2026-09-22）** ｜ 依赖：M0 ｜ 完成报告：`docs/milestone_reports/M1.md`
+
+### 执行记录
+
+- 2026-09-22 ｜ coder 子代理实现 app/evidence 包 + api.py 只读路由 + 15 测试 + 两文档 ｜ pytest tests/evidence ｜ 14 passed →（邻居 bug 修复后）15 passed ｜ 见 M1 报告 ｜ 待提交
+- 2026-09-22 ｜ 主控集成：真实基线摄取 121 条、重复摄取 0、API 起服务实测三路由 ｜ curl /documents /evidence ｜ 数据正确；发现邻居 chunk 字典序错位 → 修复 → 回归固化 → 重建库复验通过（飞轮闭环 #1）｜ artifacts/baseline/m0-20260922/evidence.db ｜ 待提交
+
+### 验收门
+
+- [x] 重复摄取新增记录数为 0（真实基线复验 short_circuited=True）
+- [x] 修改版本不覆盖旧版本（同名不同内容 → 新 document_version 并存）
+- [x] 任意入库 Evidence 可定位来源文档和页码（page/chunk_id/邻居/artifact_uri 齐全）
+- [x] 不可定位记录标 degraded，不静默进入权威回答（查询默认排除，需显式 include_degraded）
+- [x] 必测场景全过：重复摄取 / 同名不同内容 / 中途失败续传 / 缺 bbox / 原 PDF 移动 / Nougat vs lightweight 双 fingerprint
+
+### 指标记录
+
+| 指标 | 值 | 运行日期 | 配置指纹 | 产物路径 |
+|---|---|---|---|---|
+| 摄取幂等性（重复摄取新增数） | 0 | 2026-09-22 | evidence-adapter/1;extractor=nougat;vlm=gpt-5.4 | artifacts/baseline/m0-20260922/evidence.db |
+| degraded 记录占比 | 1/121（_error metadata；视觉未生成） | 2026-09-22 | 同上 | 同上 |
+| 断点续传恢复 | 测试覆盖（failed 文档重跑只续传） | 2026-09-22 | — | tests/evidence |
+
+---
+
+## 5. M2：Agent Control Plane 骨架
+
+**状态：完成（2026-09-22）** ｜ 依赖：M0 ｜ 完成报告：`docs/milestone_reports/M2.md`
+
+### 执行记录
+
+- 2026-09-22 ｜ coder 子代理实现 app/control 包（8 模块）+ 17 工具登记 + 49 测试 + 2 冻结用例集 + CONTROL_CONTRACT ｜ pytest tests/control ｜ 49 passed（0.16s 全离线）｜ 见 M2 报告 ｜ 待提交
+- 2026-09-22 ｜ 主控集成：全量 tests/evidence+tests/control 64 绿 ｜ pytest ｜ 无跨包冲突 ｜ — ｜ 待提交
+
+### 工具风险登记表（17 工具，M2 任务 5 的输出，已冻结）
+
+| 工具 | 风险等级 | 副作用 | 幂等键 | 默认策略 |
+|---|---|---|---|---|
+| evidence.search（mock） | read_only | 无 | 不需要 | allow |
+| evidence.inspect（mock） | read_only | 无 | 不需要 | allow |
+| citation.validate（mock） | read_only | 无 | 不需要 | allow |
+| report.export（mock） | bounded_write | 写文件 | 必须（幂等账本，effect_count 可审计） | allow（限 workspace） |
+| PDFReaderTool | read_only（元数据） | 无 | — | allow |
+| PDFKnowledgeBaseSanitizerTool | bounded_write（元数据） | 改 KB | 待 M3 | allow（限 workspace） |
+| URLValidationTool | read_only（元数据） | 无 | — | allow |
+| WebSearchTool | external + 高风险 | 外发查询 | — | review（不执行） |
+| WebScraperTool | external | 外发请求 | — | review |
+| WikipediaSearchTool | external | 外发请求 | — | review |
+| PythonREPLTool | external + 高风险 | 任意代码执行 | — | review（不执行） |
+| ImageAnalysisTool | read_only（元数据） | 无 | — | allow |
+| CSVandExcelFileParserTool | read_only（元数据） | 无 | — | allow |
+| CSVDataFinderTool | read_only（元数据） | 无 | — | allow |
+| TextFileReaderTool | read_only（元数据） | 无 | — | allow |
+| SkillLookupTool | read_only（元数据） | 无 | — | allow |
+| FileDownloaderTool | external + 高风险 | 下载写盘 | 待 M3 | review（不执行） |
+
+### 验收门
+
+- [x] 非法计划拦截率 100%（冻结契约测试集 13 条越权全拦，措辞不泛化）
+- [x] 未授权工具实际执行次数为 0（断言 effect_count==0）
+- [x] deny/clarify/abstain 均有稳定 reason code（契约层 min_length=1）
+- [x] 换模型不绕过 Schema/Policy（test_model_swap 恶意 planner 全拦截）
+- [x] 必测场景全过：幻觉工具名 / 参数缺失·错型·多余 / 超 max_tool_calls / 低置信澄清 / 只读请求调写工具 / Prompt Injection（含 skills 变体）/ Planner 异常 fail-closed
+
+### 指标记录
+
+| 指标 | 值 | 运行日期 | 配置指纹 | 产物路径 |
+|---|---|---|---|---|
+| 契约测试集规模 | router 12 + policy 16 = 28 条冻结 | 2026-09-22 | — | benchmarks/ |
+| 误拦率（合法计划被拒） | 0（冻结集合法用例全 allow） | 2026-09-22 | — | tests/control |
+
+---
+
+## 6. M3：Durable Runtime 与精确恢复
+
+**状态：完成（2026-09-22）** ｜ 依赖：M2 ｜ 完成报告：`docs/milestone_reports/M3.md`
+
+### 执行记录
+
+- 2026-09-22 ｜ coder 子代理实现 app/durable（9 文件，自包含状态图）+ 46 测试 + RT-01..08 + 两文档 ｜ pytest tests/durable ｜ 46 passed ×2 轮 ｜ 见 M3 报告 ｜ 待提交
+- 2026-09-22 ｜ 主控集成：修复 pytest 同名收集冲突（test_idempotency.py → test_durable_idempotency.py + pytest.ini pythonpath=app）｜ 全量 157/157 ｜ pytest.ini ｜ 待提交
+
+### 故障注入用例台账
+
+| 用例 | 预期行为 | 实测结果 | 日期 | 产物路径 |
+|---|---|---|---|---|
+| RT-01 检索节点首次超时、二次成功 | retry 后完成，不重复已做节点 | 通过（前置节点调用=1） | 2026-09-22 | tests/durable |
+| RT-02 LLM 节点持续失败 | terminal 分类，安全终止 | 通过 | 2026-09-22 | 同上 |
+| RT-03 导出成功后网络断开 | 幂等去重，不重导出 | 通过（effect_count=1） | 2026-09-22 | 同上 |
+| RT-04 崩溃后 resume | 从精确 checkpoint 继续 | 通过（restored_steps+双指纹+fencing） | 2026-09-22 | 同上 |
+| RT-05 相同 idempotency key 重复提交 | 副作用数不增加 | 通过（含 8 线程并发） | 2026-09-22 | 同上 |
+| RT-06 非法状态跳转 | TypedError 拒绝 | 通过 | 2026-09-22 | 同上 |
+| RT-07 lease 过期另一 Worker 接管 | 单点继续，stale 被拒 | 通过（fencing token） | 2026-09-22 | 同上 |
+| RT-08 两并发 run | 事件与状态不串 | 通过（seq 各自连续） | 2026-09-22 | 同上 |
+
+### 验收门
+
+- [x] 恢复成功率可计算并输出（8/8=1.0，RUNTIME_CASES_SUMMARY JSON）
+- [x] 已完成节点不重复执行
+- [x] 有副作用工具重复副作用数为 0
+- [x] 每次恢复能说明 checkpoint 与配置（双指纹，不匹配默认拒绝）
+- [x] cancel 后不再产生新的工具调用
+- [x] 并发 run 事件不串流
+
+### 指标记录
+
+| 指标 | 值 | 运行日期 | 配置指纹 | 产物路径 |
+|---|---|---|---|---|
+| 冻结故障用例恢复成功率 | 8/8 = 1.0 | 2026-09-22 | — | benchmarks/runtime_cases.jsonl |
+| 重复副作用率 | 0 | 2026-09-22 | — | tests/durable |
+| 事件丢失率 | 0 | 2026-09-22 | — | 同上 |
+
+---
+
+## 7. M4：Retrieval 与 Evidence Control
+
+**状态：完成（2026-09-22）** ｜ 依赖：M1 ｜ 完成报告：`docs/milestone_reports/M4.md`
+
+### 执行记录
+
+- 2026-09-22 ｜ coder 子代理实现 app/retrieval（10 文件）+ 47 测试 + 16 冻结用例 + A0–A4 真实实验 ｜ pytest + retrieval.experiment ｜ 47 passed；A0→A4 变好 3/变差 0/不变 11 ｜ artifacts/retrieval/m4-20260922/ ｜ 待提交
+
+### 对照实验矩阵（A0–A4，冻结 `benchmarks/retrieval_cases.jsonl`，14 条带锚点用例）
+
+| 配置 | Recall@5 | Recall@20 | MRR | nDCG@20 | anchor hit@5/20 | P50/P95 ms | 日期 | 配置指纹 | 产物路径 |
+|---|---|---|---|---|---|---|---|---|---|
+| A0 现有 Chroma dense top-20 | 0.2344 | 0.4292 | 0.7792 | 0.4462 | 0.929/1.0 | 48.6/52.3 | 2026-09-22 | metrics.json 内含 | artifacts/retrieval/m4-20260922/ |
+| A1 BM25 + Dense（交错） | 0.2226 | 0.4513 | 0.7673 | 0.4598 | 0.857/1.0 | 50.2/54.6 | 2026-09-22 | 同上 | 同上 |
+| A2 A1 + RRF | 0.2487 | 0.4775 | 0.8452 | 0.4888 | 1.0/1.0 | 51.4/64.1 | 2026-09-22 | 同上 | 同上 |
+| A3 A2 + proxy rerank | 0.2226 | 0.4775 | 0.8226 | 0.4787 | 0.857/1.0 | 50.5/62.2 | 2026-09-22 | 同上 | 同上 |
+| A4 A2 + Relevance/Authority Gate（已删 A3） | **0.2985** | 0.4720 | **0.8571** | **0.5010** | 1.0/1.0 | 56.0/310（单 case 离群） | 2026-09-22 | 同上 | 同上 |
+
+paired case diff（`artifacts/retrieval/m4-20260922/paired_diff.json`）：
+
+- A0→A4：变好 [RET-T04, RET-T05, RET-V01]，变差 []，不变 11
+- 分步：A0→A1 变差 3（交错稀释）→ A2 RRF 全修复 0 回退 → A3 proxy 使 T04/T05 变差 → A4 gates 恰好修复
+- **proxy reranker 结论：无收益，A3 阶段已删，接口保留待真 cross-encoder 复测**
+
+### 验收门
+
+- [x] 冻结数据与配置后可一键重复实验（单命令，docs/RETRIEVAL.md）
+- [x] 每个最终 Evidence 可解释来源路、融合方式、保留原因（80 条 per-case trace）
+- [x] authority gate 能阻止宽泛来源挤掉目标锚点（实测 5 case 触发 13 次 anchor_protected；度量性泄漏已声明）
+- [x] 无显著收益的 reranker 已删除（A3 proxy，2 变差 0 变好）
+
+---
+
+## 8. M5：Context Budget 与 Anchor Preservation
+
+**状态：未开始** ｜ 依赖：M4
+
+### 执行记录
+
+（空）
+
+### 压力实验记录（固定 gold anchor，1/10/25/50/100 sources × ≥3 次重复）
+
+| 来源数 | 运行 | gold evidence 保留率 | anchor hit/CiH | 质量 delta | token 节省率 | overflow 数 | 日期 | 产物路径 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | R1/R2/R3 | 待填 | | | | | | |
+| 10 | R1/R2/R3 | 待填 | | | | | | |
+| 25 | R1/R2/R3 | 待填 | | | | | | |
+| 50 | R1/R2/R3 | 待填 | | | | | | |
+| 100 | R1/R2/R3 | 待填 | | | | | | |
+
+失败 onset（从哪个来源数开始退化、均值/方差）：待填
+
+### 验收门
+
+- [ ] tiktoken（或对应 tokenizer）替换 chars//4，70%/85% 阈值配置化
+- [ ] 任何回答用证据可追溯压缩前记录
+- [ ] 长上下文实验展示全部重复运行，不只最好一次
+- [ ] 100-source 若不稳定，明确报告失败区间
+
+---
+
+## 9. M6：Memory Governance
+
+**状态：未开始** ｜ 依赖：M3（治理层挂 Read/Write Gate 需要 run 上下文）
+
+### 执行记录
+
+（空）
+
+### 必测场景台账
+
+| 场景 | 预期 | 实测 | 日期 | 产物路径 |
+|---|---|---|---|---|
+| 两 workspace 同名实体 | 隔离，泄漏 0 | 待填 | | |
+| 用户纠正旧偏好 | supersede，旧值可审计不默认召回 | 待填 | | |
+| 文档描述被当用户事实 | Write Gate 拒绝 | 待填 | | |
+| Prompt Injection 写长期记忆 | 拦截 | 待填 | | |
+| 过期决策被召回 | TTL 生效，stale hit 可测 | 待填 | | |
+| 相似主题跨会话串味 | Read Gate 过滤 | 待填 | | |
+
+### 验收门
+
+- [ ] 冻结隔离测试跨 workspace 泄漏数为 0
+- [ ] 每条长期 Memory 有 provenance 和写入原因
+- [ ] supersede 旧值可审计不默认召回
+- [ ] 删除与 TTL 有测试
+
+### 指标记录
+
+| 指标 | 值 | 运行日期 | 配置指纹 | 产物路径 |
+|---|---|---|---|---|
+| write precision | 待填 | | | |
+| memory Recall@K | 待填 | | | |
+| stale hit rate | 待填 | | | |
+| conflict detection recall | 待填 | | | |
+| 跨 workspace 泄漏数 | 待填 | | | |
+| 无来源 Memory 比例 | 待填 | | | |
+
+---
+
+## 10. M7：Visual Evidence、Claim Verification 与 Human Review
+
+**状态：未开始** ｜ 依赖：M1、M3、M4
+
+### 执行记录
+
+（空）
+
+### 视觉解析质量对比（本环境第一个实验：Nougat vs PyMuPDF 降级路径）
+
+| 解析路径 | 空描述率 | 错页/错图号率 | 低信息描述率 | ViR（下游） | 日期 | 产物路径 |
+|---|---|---|---|---|---|---|
+| Nougat | 待填 | | | | | |
+| PyMuPDF lightweight | 待填 | | | | | |
+
+### 受约束 Multi-Agent 对照（B0–B3，冻结 `benchmarks/answer_cases.jsonl`）
+
+| 配置 | CoP | CiP | CiH | HR | ViR | P95 | token/成本增量 | 日期 | 配置指纹 |
+|---|---|---|---|---|---|---|---|---|---|
+| B0 现有单 AgentExecutor | 待填 | | | | | | | | |
+| B1 Planner + Tools | 待填 | | | | | | | | |
+| B2 B1 + Verifier | 待填 | | | | | | | | |
+| B3 B2 + Human Review Gate | 待填 | | | | | | | | |
+
+### 验收门
+
+- [ ] 视觉失败可归因到 parse/retrieve/context/generate 之一
+- [ ] 最终回答逐 Claim 可查看 Evidence
+- [ ] Review 决策能恢复原 run（M3 checkpoint）
+- [ ] 无收益角色已从默认图删除
+- [ ] `LLMMarkdownParser` 润色不引入新 claim（有测试）
+
+---
+
+## 10.5 M8：Eval Harness、Observability 与数据飞轮底座
+
+**状态：未开始** ｜ 依赖：M4～M7 至少其一出指标（建议提前搭骨架）
+
+### 执行记录
+
+（空）
+
+### 冻结数据集登记
+
+| 数据集 | 路径 | case 数 | 数据版本 | 冻结日期 |
+|---|---|---|---|---|
+| router_cases | `benchmarks/router_cases.jsonl` | 待填 | | |
+| policy_cases | `benchmarks/policy_cases.jsonl` | 待填 | | |
+| retrieval_cases | `benchmarks/retrieval_cases.jsonl` | 待填 | | |
+| visual_cases | `benchmarks/visual_cases.jsonl` | 待填 | | |
+| answer_cases | `benchmarks/answer_cases.jsonl` | 待填 | | |
+| context_cases | `benchmarks/context_cases.jsonl` | 待填 | | |
+| memory_cases | `benchmarks/memory_cases.jsonl` | 待填 | | |
+| runtime_cases | `benchmarks/runtime_cases.jsonl` | 待填 | | |
+| baseline_cases | `benchmarks/baseline_cases.jsonl` | 待填 | | |
+
+### 验收门
+
+- [ ] 单命令跑分层评测，输出 JSON + Markdown
+- [ ] 任一指标可回到 case、配置、trace
+- [ ] 至少一次真实"失败→修复→回归→门禁"闭环（见第 13 节第一条完整记录）
+- [ ] Judge 指标附模型、Prompt、人审一致性说明
+- [ ] LangSmith 仅可选；本地 EventStore/结果文件是事实源
+
+---
+
+## 10.6 M9：API、SSE、Dashboard 与云端交付
+
+**状态：未开始** ｜ 依赖：M3、M8
+
+### 执行记录
+
+（空）
+
+### 新 API 路由实现登记
+
+| 路由 | 状态 | 实现位置 | 测试 |
+|---|---|---|---|
+| POST /documents/ingest | 未开始 | | |
+| POST /runs | 未开始 | | |
+| GET /runs/{run_id} | 未开始 | | |
+| GET /runs/{run_id}/events | 未开始 | | |
+| POST /runs/{run_id}/cancel | 未开始 | | |
+| POST /runs/{run_id}/resume | 未开始 | | |
+| POST /reviews/{review_id}/decision | 未开始 | | |
+| GET /answers/{answer_id}/evidence | 未开始 | | |
+| POST /benchmarks/run | 未开始 | | |
+| GET /benchmarks/{benchmark_id} | 未开始 | | |
+
+### 验收门
+
+- [ ] 干净环境按 README 原生路径启动成功（实测记录贴下面执行记录）；Docker 路径本期不验收
+- [ ] 5～8 分钟演示：摄取/计划授权/检索/证据/故障恢复/Review/Benchmark
+- [ ] Demo 失败有稳定错误页和 trace，不伪成功
+- [ ] 部署文档无地址/密码/真实 key；`.env.example` 的 `HF_API_KEY` 笔误已修正为 `HF_TOKEN`
+- [ ] `start_radiant.sh` 升级：健康检查、日志轮转、PID 管理
+- [ ] SQLite 与 artifact 目录备份/恢复有脚本并实测
+- [ ] ~~compose 写死路径修正~~ → 后置到封装阶段，移出 M9 验收范围
+
+---
+
+## 10.7 M10：最终实验与求职材料
+
+**状态：未开始** ｜ 依赖：M4～M9
+
+### 六张对照表完成度
+
+| 对照表 | 状态 | 数据位置 |
+|---|---|---|
+| 1. Dense vs Hybrid vs RRF vs Rerank/Gate | 未开始 | |
+| 2. 无预算 vs Budget/Compression | 未开始 | |
+| 3. AgentExecutor 单次执行 vs Durable Runtime | 未开始 | |
+| 4. 会话 JSONL 注入 vs Governed Memory | 未开始 | |
+| 5. B0 单 Agent vs Verifier/Review | 未开始 | |
+| 6. Nougat vs 降级路径；visual description vs visual rerank/region | 未开始 | |
+
+### 求职交付物清单
+
+- [ ] `README.md`（背景/上游/个人贡献/架构/运行/Benchmark/限制）
+- [ ] `docs/ARCHITECTURE.md`
+- [ ] `docs/DEMO_SCRIPT.md`
+- [ ] `docs/INTERVIEW_QA.md`
+- [ ] `docs/OWNERSHIP.md`（上游镜像 / fork 既有增量 / 本项目增量三方分清）
+- [ ] 架构图、控制状态图、Trace 截图、Benchmark 图
+- [ ] 4～5 条简历 bullet（方括号全部替换为真实值）
+- [ ] 3 分钟介绍稿 + 15 分钟深挖讲稿
+- [ ] 防伪审计六问逐条可答（含失败 case 与限制：无 GPU、前端无源码、Docker 不可用）
+
+---
+
+## 11. 执行日志（全项目 append-only 流水）
+
+格式：`日期 ｜ Milestone/Wave ｜ 操作 ｜ 命令 ｜ 结果 ｜ 产物 ｜ commit`
+
+- 2026-09-22 ｜ M0 ｜ 全仓库审计 ｜ explore 子代理审计 ｜ 完成，发现 H1–H11 ｜ 主计划 v2 ｜ `051d0b8`
+- 2026-09-22 ｜ — ｜ 主计划 v2 重写 + 本台账创建 ｜ — ｜ 完成 ｜ `RADIANT-Control_KimiCode分阶段执行计划.md`、本文件 ｜ 待提交
+- 2026-09-22 ｜ M0 ｜ 环境修复包 ｜ HF_API_KEY 兼容 + HF_ENDPOINT 镜像 + LangSmith 条件化 + tesseract 5.5.2 + agent 预算配置化 ｜ 全部编译通过、实测生效 ｜ 见 M0 执行记录 ｜ 待提交
+- 2026-09-22 ｜ M0 ｜ DeepSeek 对话接入 ｜ radiant_llm.py deepseek 分支 ｜ /initialize 成功，e2e 跑通 ｜ 同上 ｜ 待提交
+- 2026-09-22 ｜ M0 ｜ Nougat 基线解析 ｜ run_parse.py ｜ 615.4s/15页，119 chunk 全 nougat 未降级 ｜ artifacts/baseline/m0-20260922/ ｜ 待提交
+- 2026-09-22 ｜ M0 ｜ schema profiling + 幂等实测 + 5 条 e2e ｜ schema_profile.py / 重复摄取 / curl ｜ 01 表 100% 填充；摄取计算不幂等（BC-parser-002）；e2e 5/5 ｜ 同上 ｜ 待提交
+- 2026-09-22 ｜ M0 ｜ 交付物与验收 ｜ — ｜ 6 文档 + baseline.yaml + 12 cases + artifacts 齐备，验收门 5/5 ｜ `docs/milestone_reports/M0.md` ｜ 待提交
+- 2026-09-22 ｜ M1 ｜ Evidence 包实现 ｜ coder 子代理 ｜ app/evidence + api.py 三路由 + 15 测试；真实摄取 121 条、重复摄取 0 ｜ `docs/milestone_reports/M1.md` ｜ 待提交
+- 2026-09-22 ｜ M2 ｜ Control Plane 骨架 ｜ coder 子代理 ｜ app/control 8 模块 + 17 工具登记 + 49 测试 + 28 冻结用例；model-swap 全拦截 ｜ `docs/milestone_reports/M2.md` ｜ 待提交
+- 2026-09-22 ｜ M1 ｜ 飞轮闭环 #1（BC-parser-003 邻居排序） ｜ 集成验证发现→resume 修复→回归固化→真实库复验 ｜ 全量 64/64 绿 ｜ 台账 13.4 ｜ 待提交
+- 2026-09-22 ｜ M3 ｜ Durable Runtime ｜ coder 子代理 ｜ app/durable 9 文件 + 46 测试；RT 恢复率 8/8=1.0、副作用重复 0、并发隔离 ｜ `docs/milestone_reports/M3.md` ｜ 待提交
+- 2026-09-22 ｜ M4 ｜ Hybrid 检索与门禁 ｜ coder 子代理 ｜ app/retrieval 10 文件 + 47 测试 + A0–A4 真实指标；A0→A4 变好 3 变差 0；proxy reranker 无收益已删 ｜ `docs/milestone_reports/M4.md`、artifacts/retrieval/m4-20260922/ ｜ 待提交
+- 2026-09-22 ｜ 集成 ｜ pytest 同名冲突修复（test_durable_idempotency.py + pytest.ini）｜ 全量 157/157 绿 ｜ pytest.ini ｜ 待提交
+- 2026-09-22 ｜ — ｜ 部署策略确认 ｜ 用户决策：本期不在 Docker 上调整，compose 修正后置封装阶段；Grace vLLM 确认为可选（需 TAMU HPRC，本环境不可用）｜ 已写入两份文档 ｜ 主计划 M9、台账第 14 节 ｜ 待提交
+
+（此后每次执行在此追加一行）
+
+---
+
+## 12. 指标总表（跨 Milestone 汇总，只填有配置指纹的值）
+
+### 12.1 检索质量（冻结 retrieval_cases，14 条带锚点）
+
+| 日期 | 配置 | Recall@5 | Recall@20 | MRR | nDCG@20 | anchor hit@5 | CoP | CiH | HR | 产物路径 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-09-22 | A0 纯 dense 基线 | 0.2344 | 0.4292 | 0.7792 | 0.4462 | 0.929 | — | — | — | artifacts/retrieval/m4-20260922/ |
+| 2026-09-22 | A4 当前最优（RRF+gates） | 0.2985 | 0.4720 | 0.8571 | 0.5010 | 1.0 | — | — | — | 同上 |
+
+### 12.2 Runtime 可靠性（冻结 runtime_cases）
+
+| 日期 | 配置 | 恢复成功率 | 重复副作用率 | 事件丢失率 | cancel 泄漏 | 产物路径 |
+|---|---|---|---|---|---|---|
+| 2026-09-22 | 基线（无 checkpoint，恢复率 0） | 0（架构性，未跑） | — | — | — | M0 审计 |
+| 2026-09-22 | M3 DurableRunner | 8/8 = 1.0 | 0 | 0 | 0 | tests/durable + benchmarks/runtime_cases.jsonl |
+
+### 12.3 Memory 治理（冻结 memory_cases）
+
+| 日期 | 配置 | write precision | Recall@K | stale hit | 泄漏数 | 产物路径 |
+|---|---|---|---|---|---|---|
+| 待填 | 基线（现有 JSONL 注入） | | | | | |
+
+### 12.4 视觉与端到端（冻结 visual/answer_cases）
+
+| 日期 | 配置 | ViR | claim support | citation coverage | unsupported rate | 产物路径 |
+|---|---|---|---|---|---|---|
+| 待填 | B0 基线 | | | | | |
+
+### 12.5 成本与延迟
+
+| 日期 | 配置 | P50 | P95 | token/次 | 成本/次 | 产物路径 |
+|---|---|---|---|---|---|---|
+| 待填 | 基线 | | | | | |
+
+---
+
+## 13. 数据飞轮
+
+### 13.1 飞轮规则
+
+```text
+Trace / Review / User Feedback
+→ 脱敏与来源检查
+→ 失败归因（必须落到一层：parser/retrieval/context/generation/runtime/policy/memory）
+→ 固定为 regression case（写入 benchmarks/，含 case_id/预期/风险级别/来源）
+→ 单变量修改（一次只改一个因子，否则本次飞轮作废）
+→ 离线回归
+→ Release Gate
+→ 发布
+```
+
+第一版飞轮只更新：Prompt、Policy、Tool Schema、检索配置、Context 策略、测试集。**不自动训练模型。**
+
+### 13.2 Bad-case Registry
+
+格式：bad-case ID 规则 `BC-<layer>-<序号>`，layer ∈ {parser, retrieval, context, generation, runtime, policy, memory}。
+
+| ID | 发现日期 | 来源（trace/review/user） | 现象 | 归因层 | root cause | 修复 commit | regression case_id | 状态 |
+|---|---|---|---|---|---|---|---|---|
+| BC-runtime-001 | 2026-09-22 | 代码审计 | 全局 `Chatbot()` 单例，并发请求共享状态，SSE 轮询共享列表事件会串 | runtime | 无 run 级状态隔离 | 未修复 | 待 M3 固化 | 开放 |
+| BC-policy-001 | 2026-09-22 | 代码审计 | `PythonREPLTool` 无沙箱，策略只在提示词文本里 | policy | 无 Policy Engine | 未修复 | 待 M2 固化 | 开放 |
+| BC-retrieval-001 | 2026-09-22 | 代码审计 | 纯 dense top-20，无 BM25/RRF/rerank，精确术语/数字查询不稳定（待量化） | retrieval | 单路召回 | 未修复 | 待 M4 固化 | 开放 |
+| BC-context-001 | 2026-09-22 | 代码审计 | token 估算 chars//4；overflow 压缩路径不保证证据保留 | context | 粗估算+无证据保护 | 未修复 | 待 M5 固化 | 开放 |
+| BC-generation-001 | 2026-09-22 | 代码审计 | citation 靠提示词自觉 + 工具内 sources 拼接；`LLMMarkdownParser` 二次润色可能引入新 claim | generation | 无 claim-evidence 校验 | 未修复 | 待 M7 固化 | 开放 |
+| BC-parser-001 | 2026-09-22 | 部署记录+代码审计 | 代码不读 `HF_API_KEY` + huggingface.co 直连超时，Nougat 疑似长期静默降级 PyMuPDF | parser | 变量名不兼容 + 网络不可达 | 已修复：`vp_nougat_engine.py:47-51` 接受 HF_API_KEY；`.env` 配 HF_ENDPOINT 镜像；**Nougat 实测解析 15 页成功（119 chunk 全 extractor=nougat，未降级）** | 待 M1 固化为摄取回归 case | 已修复（待回归固化） |
+| BC-parser-002 | 2026-09-22 | M0 实测 | 重复摄取同一 PDF 不短路：重算全部 119 chunk（≈10 分钟 CPU 浪费），但按 chunk_id 覆盖写、无重复记录；metadata 重跑时跳过（行为不一致） | parser | 注册表（04_processed_pdfs）只做记录不做短路；写入幂等、计算不幂等 | 已修复（M1）：adapter 层 `ingest_state` 按 (workspace, document_id, content_hash, parser_fingerprint) 短路，真实基线复验 new_records=0 | test_reingest_same_document_is_noop | 已修复（回归固化） |
+| BC-parser-003 | 2026-09-22 | M1 集成验证 | Evidence 相邻 chunk 邻居全部错位：p2:c0 的 next 是 p12:c1（字典序 "p1"<"p10"<"p12"<"p2"） | parser | 上游 chunk_index 每页重置，adapter 用裸 index 查找表跨页碰撞 | 已修复：按 (page, chunk_index) 数值阅读序取位置前后各 1 | test_neighbours_numeric_order_across_12_plus_pages | 已修复（回归固化，飞轮闭环 #1） |
+| BC-runtime-002 | 2026-09-22 | 代码审计 | `LANGCHAIN_TRACING_V2=true` 硬编码，无 key 时行为未定义 | runtime | 配置硬编码 | 已修复（2026-09-22）：7 处改为有 `LANGCHAIN_API_KEY` 才开启，默认 false | 待 M8 纳入回归 | 已修复 |
+
+### 13.3 Release Gate 历史
+
+每次过门禁追加一行。Gate 标准（M8 固化前为临时标准）：核心 Recall 不退化 / unsupported 不上升 / 隔离与幂等测试通过 / 新增 regression case 全绿。
+
+| 日期 | 版本/commit | 触发原因 | Gate 结果 | 各项指标对比（vs 上一版） | 产物路径 |
+|---|---|---|---|---|---|
+| （空——首次 Release Gate 待 M8） | | | | | |
+
+### 13.4 飞轮转动记录（每次完整闭环一行）
+
+| 序号 | 闭环日期 | 关联 bad-case | 单变量修改内容 | 回归结果 | Gate | 备注 |
+|---|---|---|---|---|---|---|
+| #1 | 2026-09-22 | BC-parser-003 | adapter 邻居计算：裸 chunk_index 查找表 → (page, chunk_index) 数值阅读序 | 新增回归 1 条，tests/evidence 15/15 绿，全量 64/64 绿；真实基线库重建复验通过 | 临时标准通过（M8 前无正式 Release Gate） | 首次完整"发现→归因→修复→固化→复验"闭环 |
+
+---
+
+## 14. 风险与债务台账
+
+| 登记日期 | 内容 | 影响 | 解锁条件 | 状态 |
+|---|---|---|---|---|
+| 2026-09-22 | Docker 在本机不可用；用户决定本期不在 Docker 上调整 | compose 修正（写死路径、镜像、卷）整体后置到最终封装阶段；M9 只验收原生路径 | 封装阶段有一台可跑 Docker 的机器 | 后置 |
+| 2026-09-22 | `.env` 中 HF 变量名与代码不符（代码只读 `HF_TOKEN`/`HUGGING_FACE_HUB_TOKEN`）+ huggingface.co 直连超时 | 若变量名错，Nougat 静默降级 PyMuPDF，M0 基线和 M7 视觉实验都受影响 | 已解决：代码接受 `HF_API_KEY`（vp_nougat_engine.py:47-51），`.env` 追加 `HF_ENDPOINT=https://hf-mirror.com`，登录+镜像模型存在性实测通过（2026-09-22） | 已关闭 |
+| 2026-09-22 | React 前端只有 dist 无源码 | Dashboard 只能做独立静态页，无法改现有界面 | 接受独立静态页方案，或找回源码 | 开放 |
+| 2026-09-22 | ~~HF token 未配~~ → 已更正：token 已写入 `.env`，问题改为变量名疑似不符（见上一条） | — | — | 已关闭（更正） |
+| 2026-09-22 | ~~tesseract 缺失~~ → 已解决：conda 官方源装 5.5.2 到 /root/tesseract-env（阿里云 anaconda 镜像已停服 404）；start_radiant.sh 经 TESSERACT_PREFIX 接入 PATH | 扫描版 PDF 的 OCR 备用路径可用 | — | 已关闭 |
+| 2026-09-22 | GEMINI_API_KEY 未配（用户已确认提供） | 视觉解析（02_visuals/03_metadata 正常产物）与 ImageAnalysisTool 被卡；M0 视觉补测、M7 依赖 | 用户把 key 写入 Docker_Executable/.env 后重跑 run_parse.py | 开放（等用户） |
+| 2026-09-22 | 磁盘紧张（FUSE 盘，不支持符号链接） | 多份向量库/artifact 可能放不下 | 定期清理策略；artifact 落盘目录可配置 | 开放 |
+| 2026-09-22 | 仓库零测试 | M8 之前所有"通过"都缺工程底线保障 | M2 起每个 Milestone 自带 tests/ | 开放 |
+
+---
+
+## 15. 决策日志（ADR 索引）
+
+| ADR | 标题 | 日期 | 状态 | 文件 |
+|---|---|---|---|---|
+| 0001 | project-boundary | 待写 | 未开始 | `docs/adr/0001-project-boundary.md` |
+| 0002 | evidence-identity | 待写 | 未开始 | `docs/adr/0002-evidence-identity.md` |
+| — | （后续 ADR 在此追加：如 durable 命名避开 runtime/、Dashboard 独立静态页方案、reranker 取舍等） | | | |

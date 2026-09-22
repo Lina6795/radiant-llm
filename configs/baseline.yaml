@@ -1,0 +1,50 @@
+# M0 Baseline 配置（冻结）
+# 任何 baseline 实验必须注明与本文件的差异（单变量原则）
+run_id: m0-20260922
+git_commit: "051d0b8+uncommitted-m0-fixes"
+date: 2026-09-22
+
+environment:
+  python: runtime/bin/python3.12   # 3.12.13，镜像 /usr/local 解包
+  device: cpu
+  cpu_cores: 6
+  memory_gb: 30
+  docker: unavailable               # 无特权云容器
+  hf_endpoint: https://hf-mirror.com  # huggingface.co 直连超时
+  tesseract: /root/tesseract-env    # 5.5.2，conda defaults 渠道
+
+models:
+  chat: deepseek-v4-pro             # OPENAI_BASE_URL=https://api.deepseek.com
+  chat_fallback: deepseek-flash
+  vision: gemini-2.5-flash          # 等 GEMINI_API_KEY 到位
+  embeddings: local                 # RADIANT_EMBEDDING_PROVIDER=local
+  local_embedding_model: BAAI/bge-base-en-v1.5
+  local_embedding_device: cpu
+
+parser:
+  text_mode: nougat                 # facebook/nougat-small；不接受静默降级 lightweight
+  chunk_size: 500
+  chunk_overlap: 100
+  vision_detail: low
+  metadata_pages: 2
+
+agent:
+  max_iterations: 40                # RADIANT_AGENT_MAX_ITERATIONS
+  max_execution_time_seconds: 600   # RADIANT_AGENT_MAX_EXECUTION_TIME_SECONDS
+  iteration_warning_margin: 5
+
+retrieval_baseline_a0:
+  store: chroma                     # local_vector_store/
+  method: dense similarity_search
+  top_k: 20
+
+data:
+  smoke_pdfs:
+    - name: attention_is_all_you_need_1706.03762.pdf
+      source: https://export.arxiv.org/pdf/1706.03762
+      pages: 15
+      license: arXiv 公开
+      contains: [figures, tables, equations]
+  cases: benchmarks/baseline_cases.jsonl
+
+artifacts: artifacts/baseline/m0-20260922/

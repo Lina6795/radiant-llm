@@ -35,7 +35,8 @@ def NougatInitializer(model_name: str = "facebook/nougat-small"):
     """
     Load the Nougat processor and model onto the best available device.
 
-    If ``HF_TOKEN`` is present in the environment (e.g. loaded from .env),
+    If an HF token is present in the environment (``HF_TOKEN``,
+    ``HUGGING_FACE_HUB_TOKEN``, or ``HF_API_KEY``; e.g. loaded from .env),
     the function authenticates with the HuggingFace Hub before downloading
     weights, which suppresses the unauthenticated-request warning and gives
     higher rate limits.
@@ -44,7 +45,11 @@ def NougatInitializer(model_name: str = "facebook/nougat-small"):
         (processor, model, device) tuple ready for inference.
     """
     import os
-    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    hf_token = (
+        os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        or os.environ.get("HF_API_KEY")
+    )
     if hf_token:
         try:
             import huggingface_hub
@@ -54,8 +59,8 @@ def NougatInitializer(model_name: str = "facebook/nougat-small"):
             logger.warning("[NOUGAT] HF login attempt failed (non-fatal): %s", exc)
     else:
         logger.info(
-            "[NOUGAT] No HF_TOKEN found — downloads may be rate-limited. "
-            "Add HF_TOKEN to your .env to silence this."
+            "[NOUGAT] No HF token found (checked HF_TOKEN / HUGGING_FACE_HUB_TOKEN / "
+            "HF_API_KEY) — downloads may be rate-limited."
         )
 
     print(f"[NOUGAT] Loading model: {model_name} …")

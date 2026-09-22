@@ -177,7 +177,7 @@ cse_id        = os.getenv('CUSTOM_SEARCH_ENGINE_ID')        # Custom search ID
 
 # Trace on LangChain
 # Set environment variables
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_TRACING_V2"] = "true" if langchain_key else "false"
 os.environ["LANGCHAIN_API_KEY"]    = langchain_key
 os.environ["OPENAI_API_KEY"]       = openai_key
 
@@ -587,9 +587,9 @@ def _raise_dash_deprecation() -> None:
 DEFAULT_REASONING_EFFORT = "medium"
 
 # Agent execution budget — hard backstops against runaway tool loops.
-AGENT_MAX_ITERATIONS = 40
-AGENT_MAX_EXECUTION_TIME_SECONDS = 600  # 10 min wall-clock backstop
-AGENT_ITERATION_WARNING_MARGIN = 5      # inject a nudge marker once this many iterations remain
+AGENT_MAX_ITERATIONS = int(os.getenv("RADIANT_AGENT_MAX_ITERATIONS", "40"))
+AGENT_MAX_EXECUTION_TIME_SECONDS = int(os.getenv("RADIANT_AGENT_MAX_EXECUTION_TIME_SECONDS", "600"))  # 10 min wall-clock backstop
+AGENT_ITERATION_WARNING_MARGIN = int(os.getenv("RADIANT_AGENT_ITERATION_WARNING_MARGIN", "5"))      # inject a nudge marker once this many iterations remain
 
 # LangChain's early-stopping sentinels — checked case-insensitively against
 # the agent's raw "output" so a cap-out never reaches the user as a bare,
@@ -1303,6 +1303,8 @@ class Chatbot:
             "gemini-3.1-pro-preview",
             "gemini-3-pro-preview",
             "gemini-2.5-flash",
+            "deepseek-v4-pro",
+            "deepseek-flash",
             GRACE_MODEL_ID,
             # "o1",
             # "o3-mini",
@@ -1451,6 +1453,67 @@ class Chatbot:
             self.embedding_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=gemini_key)
             self.persistent_dir = f"{self.llm_type}_vector_store"
             print(f"\nInitialized embeddings:\n {self.embedding_model}")
+
+        elif self.model_choice.startswith("deepseek-"):
+            # DeepSeek via OpenAI-compatible endpoint (OPENAI_BASE_URL).
+            # No embeddings API and no vision on this endpoint: embeddings default
+            # to local bge (RADIANT_EMBEDDING_PROVIDER), vision falls back to
+            # Gemini when GEMINI_API_KEY is present.
+            deepseek_model = self.model_choice
+            print(f"Model selected: {deepseek_model} (OpenAI-compatible endpoint)")
+            self.supported_reasoning_efforts = []
+
+            self.llm_model = ChatOpenAI(
+                model=deepseek_model,
+                temperature=self.temperature,
+                api_key=openai_key,
+                streaming=True,
+            )
+            print(f"Initialized llm_model: {self.llm_model}")
+
+            if gemini_key:
+                self.gemini_vision_llm = genai.GenerativeModel("gemini-2.5-flash")
+
+            self.prompt = ChatPromptTemplate.from_messages([
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("system", prompt_content),
+                ("system", "{skill_context}"),
+                ("system", "{runtime_context}"),
+                ("human", "{input}"),
+                ("placeholder", "{agent_scratchpad}")
+            ])
+
+            embed_provider = (os.getenv("RADIANT_EMBEDDING_PROVIDER") or "local").strip().lower()
+            if embed_provider == "local":
+                self.llm_type = "local"
+                try:
+                    self.embedding_model = build_local_embeddings()
+                except (ImportError, ValueError) as exc:
+                    return [dbc.Alert(str(exc), color="danger")]
+                self.persistent_dir = "local_vector_store"
+            elif embed_provider == "gemini":
+                if not gemini_key:
+                    return [
+                        dbc.Alert(
+                            "RADIANT_EMBEDDING_PROVIDER=gemini but GEMINI_API_KEY is not set.",
+                            color="danger",
+                        )
+                    ]
+                self.llm_type = "gemini"
+                self.embedding_model = GoogleGenerativeAIEmbeddings(
+                    model="models/embedding-001",
+                    google_api_key=gemini_key,
+                )
+                self.persistent_dir = f"{self.llm_type}_vector_store"
+            else:
+                return [
+                    dbc.Alert(
+                        f"RADIANT_EMBEDDING_PROVIDER={embed_provider!r} is not usable with "
+                        "DeepSeek chat (no embeddings API on this endpoint). Use 'local' or 'gemini'.",
+                        color="danger",
+                    )
+                ]
+            print(f"Initialized embeddings ({embed_provider}):\n {self.embedding_model}")
 
         elif self.model_choice == GRACE_MODEL_ID:
             print(f"Model selected: {GRACE_MODEL_ID}")

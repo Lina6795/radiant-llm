@@ -488,6 +488,75 @@ async def stream_query(query: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+# ---------------------------------------------------------------------------
+# Read-only Evidence Inspector API (RADIANT-Control M1)
+# Served from the SQLite evidence store; deliberately independent of the
+# global `cb` Chatbot singleton — the store is injected per request.
+# Registered BEFORE the frontend catch-all below so it is never shadowed.
+# ---------------------------------------------------------------------------
+from typing import Optional as _Optional
+
+from fastapi import Depends as _Depends, Query as _Query
+
+from evidence.models import Modality as _Modality
+from evidence.store import EvidenceStore as _EvidenceStore
+from evidence.store import get_evidence_store as _get_evidence_store
+
+
+@app.get("/evidence", tags=["evidence"])
+def list_evidence(
+    document_id: _Optional[str] = None,
+    modality: _Optional[_Modality] = None,
+    degraded: _Optional[bool] = None,
+    workspace_id: _Optional[str] = None,
+    include_degraded: bool = False,
+    limit: int = _Query(100, ge=1, le=1000),
+    offset: int = _Query(0, ge=0),
+    store: _EvidenceStore = _Depends(_get_evidence_store),
+):
+    result = store.query_evidence(
+        workspace_id=workspace_id,
+        document_id=document_id,
+        modality=modality.value if modality else None,
+        degraded=degraded,
+        include_degraded=include_degraded,
+        limit=limit,
+        offset=offset,
+    )
+    store.close()
+    return result
+
+
+@app.get("/evidence/{evidence_id}", tags=["evidence"])
+def get_evidence_item(
+    evidence_id: str,
+    store: _EvidenceStore = _Depends(_get_evidence_store),
+):
+    item = store.get_evidence(evidence_id)
+    store.close()
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Evidence {evidence_id!r} not found")
+    return item
+
+
+@app.get("/documents", tags=["evidence"])
+def list_documents(
+    document_id: _Optional[str] = None,
+    workspace_id: _Optional[str] = None,
+    limit: int = _Query(100, ge=1, le=1000),
+    offset: int = _Query(0, ge=0),
+    store: _EvidenceStore = _Depends(_get_evidence_store),
+):
+    result = store.list_documents(
+        workspace_id=workspace_id,
+        document_id=document_id,
+        limit=limit,
+        offset=offset,
+    )
+    store.close()
+    return result
+
+
 # Serve built React frontend if present (used in Docker image)
 # IMPORTANT: Mount static files LAST so API routes take precedence
 def resolveFrontendDist() -> Path | None:

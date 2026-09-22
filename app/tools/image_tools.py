@@ -102,7 +102,7 @@ cse_id        = os.getenv('CUSTOM_SEARCH_ENGINE_ID')        # Custom search ID
 
 # Trace on LangChain
 # Set environment variables
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_TRACING_V2"] = "true" if langchain_key else "false"
 os.environ["LANGCHAIN_API_KEY"]    = langchain_key
 os.environ["OPENAI_API_KEY"]       = openai_key
 
