@@ -1,0 +1,51 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f6f8; color: #1d2129; }
+header { display: flex; align-items: center; gap: 24px; padding: 10px 20px; background: #1f2937; color: #fff; flex-wrap: wrap; }
+header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+header .muted { color: #9ca3af; font-weight: 400; font-size: 13px; }
+nav { display: flex; gap: 4px; }
+nav a { color: #d1d5db; text-decoration: none; padding: 6px 12px; border-radius: 6px; font-size: 14px; }
+nav a.active, nav a:hover { background: #374151; color: #fff; }
+.pill { margin-left: auto; font-size: 12px; padding: 3px 10px; border-radius: 999px; background: #6b7280; }
+.pill.ok { background: #059669; }
+.pill.bad { background: #dc2626; }
+.badge { background: #dc2626; color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; }
+.hidden { display: none !important; }
+main { padding: 20px; max-width: 1280px; margin: 0 auto; }
+h2 { font-size: 16px; margin: 18px 0 10px; }
+h3 { font-size: 14px; }
+h4 { font-size: 13px; margin: 14px 0 6px; }
+.cards { display: flex; gap: 12px; flex-wrap: wrap; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; min-width: 200px; flex: 1; }
+.card h3 { margin: 0 0 6px; }
+.card p { margin: 0 0 8px; font-size: 13px; color: #4b5563; }
+.btn, button { background: #2563eb; color: #fff; border: 0; border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer; text-decoration: none; display: inline-block; }
+button:hover, .btn:hover { background: #1d4ed8; }
+button.secondary { background: #6b7280; }
+button.danger { background: #dc2626; }
+.panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+input, select { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; background: #fff; font-size: 12.5px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+th { background: #f9fafb; font-weight: 600; color: #374151; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: #f3f4f6; }
+tbody tr.selected { background: #eff6ff; }
+.split { display: grid; grid-template-columns: minmax(0,5fr) minmax(0,6fr); gap: 16px; align-items: start; }
+.detail { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; }
+.btnrow { display: flex; gap: 8px; margin: 8px 0; }
+.log { background: #111827; color: #d1d5db; border-radius: 6px; padding: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow-y: auto; }
+.events { max-height: 420px; }
+.log .ev { border-bottom: 1px solid #1f2937; padding: 2px 0; }
+.log .ev .t { color: #60a5fa; }
+.state { padding: 1px 8px; border-radius: 999px; font-size: 11px; }
+.state.succeeded, .state.done, .state.ok, .state.running { background: #d1fae5; color: #065f46; }
+.state.failed, .state.cancelled, .state.rejected { background: #fee2e2; color: #991b1b; }
+.state.waiting_review, .state.pending, .state.queued, .state.resuming, .state.cancel_requested { background: #fef3c7; color: #92400e; }
+.fail-row td { background: #fef2f2; color: #991b1b; }
+pre { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; font-size: 12px; overflow-x: auto; max-height: 480px; }
+.review-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+.review-card .meta { font-size: 12px; color: #6b7280; margin-bottom: 6px; }
+.review-card textarea { width: 100%; min-height: 44px; margin: 6px 0; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+.muted { color: #6b7280; font-size: 12px; }
+footer { text-align: center; padding: 18px; }

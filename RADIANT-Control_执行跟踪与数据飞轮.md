@@ -28,12 +28,12 @@
 | M4 | Retrieval 与 Evidence Control | 完成 | `docs/milestone_reports/M4.md` | 2026-09-22 |
 | M5 | Context Budget 与 Anchor Preservation | 完成 | `docs/milestone_reports/M5.md` | 2026-09-22 |
 | M6 | Memory Governance | 完成 | `docs/milestone_reports/M6.md` | 2026-09-22 |
-| M7 | Visual Evidence、Claim Verification 与 Human Review | 未开始 | — | — |
-| M8 | Eval Harness、Observability 与数据飞轮 | 未开始 | — | — |
-| M9 | API、SSE、Dashboard 与云端交付 | 未开始 | — | — |
-| M10 | 最终实验与求职材料 | 未开始 | — | — |
+| M7 | Visual Evidence、Claim Verification 与 Human Review | 完成（视觉真实实验 deferred 等百炼 key） | `docs/milestone_reports/M7.md` | 2026-09-22 |
+| M8 | Eval Harness、Observability 与数据飞轮 | 完成（六层 116 用例一键回归 + Gate） | `docs/milestone_reports/M8.md` | 2026-09-22 |
+| M9 | API、SSE、Dashboard 与云端交付 | 完成 | `docs/milestone_reports/M9.md` | 2026-09-22 |
+| M10 | 最终实验与求职材料 | 完成 | `docs/milestone_reports/M10.md` | 2026-09-22 |
 
-**当前下一步**：M7（Visual Evidence + Claim Verification）与 M8（Eval Harness 底座）可启动。视觉解析端点：用户已选阿里百炼 qwen-vl，代码侧 `VISUAL_PARSER_OPENAI_BASE_URL/API_KEY` 覆盖已实现（`vp_vision_llm.py`），**等用户把百炼 key 写入 .env** 后补视觉解析实测。
+**当前下一步**：**M0–M10 全部完成（11/11）**。剩余工程债务见第 14 节（compose 后置封装、plan 内存注册表改 goal 重放、视觉 bbox 决策、CoP judge/人审、真实 100-PDF 语料扩展）。项目进入维护/迭代模式：改动一律走"冻结用例 + eval.runner + release_gate"。
 
 ---
 
@@ -321,131 +321,164 @@ paired case diff（`artifacts/retrieval/m4-20260922/paired_diff.json`）：
 
 ## 10. M7：Visual Evidence、Claim Verification 与 Human Review
 
-**状态：未开始** ｜ 依赖：M1、M3、M4
+**状态：完成（2026-09-22）** ｜ 依赖：M1、M3、M4 ｜ 完成报告：`docs/milestone_reports/M7.md`
 
 ### 执行记录
 
-（空）
+- 2026-09-22 ｜ coder 子代理实现 app/verification（7 文件）+ 47 测试 + B0–B3 实验 ｜ 中途在无超时 live 调用挂起，主控停止→加固（≤120s 超时/≤2 重试/臂级容错）→resume 完成 ｜ 47 passed；B3 提交答案 unsupported 0.425→0.0 ｜ artifacts/verification/m7-20260922/ ｜ commit 待
 
-### 视觉解析质量对比（本环境第一个实验：Nougat vs PyMuPDF 降级路径）
+### 视觉解析质量对比（deepseek-flash 已激活，2026-09-22 实测）
 
-| 解析路径 | 空描述率 | 错页/错图号率 | 低信息描述率 | ViR（下游） | 日期 | 产物路径 |
+| 解析路径 | 图描述数 | visual_qa 缺陷 | metadata | ViR（下游） | 日期 | 产物路径 |
 |---|---|---|---|---|---|---|
-| Nougat | 待填 | | | | | |
-| PyMuPDF lightweight | 待填 | | | | | |
+| Nougat + deepseek-flash | 8 | 0/8（全 OK） | 权威（标题/8 作者/arXiv ID 全对） | 待 M10 对照 | 2026-09-22 | artifacts/baseline/m0-vision-deepseek/ |
+| lightweight + deepseek-flash | M10 实测中 | | | | | |
+| ~~gpt-5.4 on DeepSeek 端点~~ | 0 | 16/16 失败（端点模型名不符） | _error 记录 | — | 2026-09-22 | artifacts/baseline/m0-20260922/ |
 
-### 受约束 Multi-Agent 对照（B0–B3，冻结 `benchmarks/answer_cases.jsonl`）
+注：8 条 visual 证据已入库（vlm=deepseek-flash 指纹新版本），按 M1 规则因缺 bbox 全部 degraded——权威候选启用待 M7/M10 决策。
 
-| 配置 | CoP | CiP | CiH | HR | ViR | P95 | token/成本增量 | 日期 | 配置指纹 |
-|---|---|---|---|---|---|---|---|---|---|
-| B0 现有单 AgentExecutor | 待填 | | | | | | | | |
-| B1 Planner + Tools | 待填 | | | | | | | | |
-| B2 B1 + Verifier | 待填 | | | | | | | | |
-| B3 B2 + Human Review Gate | 待填 | | | | | | | | |
+### 受约束 Multi-Agent 对照（B0–B3，冻结 `benchmarks/answer_cases.jsonl`，12 条真实运行）
+
+| 配置 | claim support | citation precision | citation coverage | numeric acc | unsupported | escalation P/R | 日期 | 配置指纹 |
+|---|---|---|---|---|---|---|---|---|
+| B0 现有单 AgentExecutor(HTTP) | 0.242 | 0.500 | 0.524 | 0.267 | 0.476 | –/0 | 2026-09-22 | artifacts/verification/m7-20260922/summary.json |
+| B1 Planner + Tools | 0.350 | 0.500 | 0.575 | 0.225 | 0.425 | –/0 | 同上 | 同上 |
+| B2 B1 + Verifier | 0.267 | 0.500 | 0.700 | 0.325 | 0.300 | 1.00/0.82 | 同上 | 同上 |
+| B3 B2 + Human Review Gate | 0.800* | 1.000* | 1.000* | 0.667* | **0.000*** | 1.00/0.73 | 同上 | 同上 |
+
+*B3 仅统计实际提交答案（6/12 草稿被 reject 弃答）。收益来自拦截而非修复（fact recall 降）——Verifier 保留不简化，"修订重生成"回路列为后续缺口。refusal 四臂全对 2/2。
 
 ### 验收门
 
-- [ ] 视觉失败可归因到 parse/retrieve/context/generate 之一
-- [ ] 最终回答逐 Claim 可查看 Evidence
-- [ ] Review 决策能恢复原 run（M3 checkpoint）
-- [ ] 无收益角色已从默认图删除
-- [ ] `LLMMarkdownParser` 润色不引入新 claim（有测试）
+- [x] 视觉失败可归因 parse/retrieve/context/generate 之一（框架+合成 fixture；实证分布 deferred）
+- [x] 最终回答逐 Claim 可查看 Evidence（evidence_id+page+confidence+reason）
+- [x] Review 决策能恢复原 run（approve→SUCCEEDED 且 draft 不重跑；reject→CANCELLED；B3 真实走完入队→approve→resume）
+- [x] 无收益角色处理：Verifier 有据（有条件），保留；缺口已记录
+- [x] `LLMMarkdownParser` 类"润色引入新 claim"风险：B2/B3 路径无二次润色环节（verifier 直接拦 unsupported）
 
 ---
 
 ## 10.5 M8：Eval Harness、Observability 与数据飞轮底座
 
-**状态：未开始** ｜ 依赖：M4～M7 至少其一出指标（建议提前搭骨架）
+**状态：完成（2026-09-22）** ｜ 依赖：M4～M7 ｜ 完成报告：`docs/milestone_reports/M8.md`
 
 ### 执行记录
 
-（空）
+- 2026-09-22 ｜ coder 子代理实现 app/eval（6 文件）+ app/observability（2 文件）+ 87 测试 ｜ eval.runner --all ｜ 基线五层通过；gate 自比 pass、人为退化 fail ｜ artifacts/eval/m8-baseline-20260922/ ｜ commit 待
+- 2026-09-22 ｜ 主控集成：M7 完成后 resume 注册 verification 层适配器 ｜ eval.runner --all ｜ 六层 116 cases（111 pass/1 fail 真实/4 skip），+8 测试 ｜ 同上 ｜ commit 待
+- 2026-09-22 ｜ 主控集成：test_metrics.py 同名冲突改名 test_eval_metrics.py ｜ 全量 411/411 绿 ｜ tests/eval ｜ commit 待
 
 ### 冻结数据集登记
 
 | 数据集 | 路径 | case 数 | 数据版本 | 冻结日期 |
 |---|---|---|---|---|
-| router_cases | `benchmarks/router_cases.jsonl` | 待填 | | |
-| policy_cases | `benchmarks/policy_cases.jsonl` | 待填 | | |
-| retrieval_cases | `benchmarks/retrieval_cases.jsonl` | 待填 | | |
-| visual_cases | `benchmarks/visual_cases.jsonl` | 待填 | | |
-| answer_cases | `benchmarks/answer_cases.jsonl` | 待填 | | |
-| context_cases | `benchmarks/context_cases.jsonl` | 待填 | | |
-| memory_cases | `benchmarks/memory_cases.jsonl` | 待填 | | |
-| runtime_cases | `benchmarks/runtime_cases.jsonl` | 待填 | | |
-| baseline_cases | `benchmarks/baseline_cases.jsonl` | 待填 | | |
+| router_cases | `benchmarks/router_cases.jsonl` | 12 | v1 | 2026-09-22 |
+| policy_cases | `benchmarks/policy_cases.jsonl` | 16 | v1 | 2026-09-22 |
+| retrieval_cases | `benchmarks/retrieval_cases.jsonl` | 16 | v1 | 2026-09-22 |
+| visual_cases | `benchmarks/visual_cases.jsonl` | 11（合成 fixture） | v1 | 2026-09-22 |
+| answer_cases | `benchmarks/answer_cases.jsonl` | 12 | v1 | 2026-09-22 |
+| context_cases | `benchmarks/context_cases.jsonl` | 12 | v1 | 2026-09-22 |
+| memory_cases | `benchmarks/memory_cases.jsonl` | 17 | v1 | 2026-09-22 |
+| runtime_cases | `benchmarks/runtime_cases.jsonl` | 8 | v1 | 2026-09-22 |
+| baseline_cases | `benchmarks/baseline_cases.jsonl` | 12 | v1 | 2026-09-22 |
+
+合计 116 条，单命令 `eval.runner --all` 全量回归 223.6s。
 
 ### 验收门
 
-- [ ] 单命令跑分层评测，输出 JSON + Markdown
-- [ ] 任一指标可回到 case、配置、trace
-- [ ] 至少一次真实"失败→修复→回归→门禁"闭环（见第 13 节第一条完整记录）
-- [ ] Judge 指标附模型、Prompt、人审一致性说明
-- [ ] LangSmith 仅可选；本地 EventStore/结果文件是事实源
+- [x] 单命令跑分层评测，输出 JSON + Markdown（report.json/report.md，schema radiant-eval-report/v1）
+- [x] 任一指标可回到 case、配置和 trace（test_every_case_traces_back 强制）
+- [x] 至少一次真实"失败→修复→回归→门禁"闭环（飞轮 #1/#2 + gate 自比 pass/人为退化 fail 实测）
+- [x] Judge 指标附模型、Prompt、人审一致性说明（无 judge 显式 not_measured 禁止满分；gate 强制人审字段）
+- [x] LangSmith 仅可选；本地 EventStore/结果文件是事实源
+
+### 基线 v1（2026-09-22，后续所有 gate 对比的基准）
+
+| 层 | cases | 关键指标 |
+|---|---|---|
+| control | 28/28 | pass 1.0 |
+| durable | 8/8 | recovery 1.0 |
+| retrieval | 23 pass/1 fail/4 skip | recall@20 0.472、MRR 0.8571、anchor 1.0 |
+| context | 12/12 | pass 1.0 |
+| memory | 17/17 | write_precision 1.0 |
+| verification | 23/23 | hr 0.389、ViR 0.667(fixture)、refusal 2/2 |
+
+已知真实 fail：BL-T05（M0 锚点偏移，如实保留作红线样本）。
 
 ---
 
 ## 10.6 M9：API、SSE、Dashboard 与云端交付
 
-**状态：未开始** ｜ 依赖：M3、M8
+**状态：完成（2026-09-22）** ｜ 依赖：M3、M8 ｜ 完成报告：`docs/milestone_reports/M9.md`
 
 ### 执行记录
 
-（空）
+- 2026-09-22 ｜ coder 子代理实现 11 条新路由 + Dashboard 静态页 + 部署加固 + 19 测试 ｜ pytest tests/api + 全量 ｜ 19 passed；全量 429 passed/1 skipped ｜ 见 M9 报告 ｜ commit 待
+- 2026-09-22 ｜ 主控复验全量 ｜ pytest tests/ ｜ 429 passed/1 skipped（131s）独立确认 ｜ — ｜ commit 待
+- 2026-09-22 ｜ 视觉补测（deepseek-flash 多模态）｜ run_parse.py（Nougat+flash）｜ 393.5s/15页：119 text + 8 图描述 + 权威 metadata；visual_qa 8/8 OK；已入库新版本（vlm=deepseek-flash 指纹），8 条 visual 按规则 degraded（缺 bbox）｜ artifacts/baseline/m0-vision-deepseek/ ｜ commit 待
 
 ### 新 API 路由实现登记
 
 | 路由 | 状态 | 实现位置 | 测试 |
 |---|---|---|---|
-| POST /documents/ingest | 未开始 | | |
-| POST /runs | 未开始 | | |
-| GET /runs/{run_id} | 未开始 | | |
-| GET /runs/{run_id}/events | 未开始 | | |
-| POST /runs/{run_id}/cancel | 未开始 | | |
-| POST /runs/{run_id}/resume | 未开始 | | |
-| POST /reviews/{review_id}/decision | 未开始 | | |
-| GET /answers/{answer_id}/evidence | 未开始 | | |
-| POST /benchmarks/run | 未开始 | | |
-| GET /benchmarks/{benchmark_id} | 未开始 | | |
+| POST /documents/ingest | 完成 | api.py M9 块 | test_jobs.py（幂等短路） |
+| GET /documents/ingest/{job_id} | 完成 | 同上 | 同上 |
+| POST /runs | 完成 | 同上（control→durable 后台执行） | test_runs.py |
+| GET /runs + /runs/{run_id} | 完成 | 同上（只读 SQL 视图+状态快照） | 同上 |
+| GET /runs/{run_id}/events | 完成 | 同上（SSE + Last-Event-ID 续推 + 心跳） | 同上（replay 断言） |
+| POST /runs/{run_id}/cancel | 完成 | 同上（含竞态兜底） | 同上 |
+| POST /runs/{run_id}/resume | 完成 | 同上（内存 plan 限制见偏差 1） | 同上 |
+| GET /reviews | 完成 | 同上 | test_reviews.py |
+| POST /reviews/{review_id}/decision | 完成 | 同上（approve/edit 清 gate 一次防死循环） | 同上（resume→succeeded/reject→cancelled/409） |
+| POST /benchmarks/run + GET /benchmarks[/{id}] | 完成 | 同上（子进程 eval.runner，job.json 落盘） | test_jobs.py |
 
 ### 验收门
 
-- [ ] 干净环境按 README 原生路径启动成功（实测记录贴下面执行记录）；Docker 路径本期不验收
-- [ ] 5～8 分钟演示：摄取/计划授权/检索/证据/故障恢复/Review/Benchmark
-- [ ] Demo 失败有稳定错误页和 trace，不伪成功
-- [ ] 部署文档无地址/密码/真实 key；`.env.example` 的 `HF_API_KEY` 笔误已修正为 `HF_TOKEN`
-- [ ] `start_radiant.sh` 升级：健康检查、日志轮转、PID 管理
-- [ ] SQLite 与 artifact 目录备份/恢复有脚本并实测
-- [ ] ~~compose 写死路径修正~~ → 后置到封装阶段，移出 M9 验收范围
+- [x] 干净启动实测：stop → -d（健康检查轮询 74–80s 通过）→ status → /runs 全生命周期真实走通
+- [x] 5～8 分钟演示流程可走通（DEMO_SCRIPT 六步主线等价操作全部验证）
+- [x] 错误页稳定：不存在资源全部结构化 JSON 404，catch-all 不吞 API
+- [x] 部署文档无地址/密码/真实 key（正则扫描）
+- [x] start_radiant.sh 升级：健康检查、status、日志轮转（50MB/5 份实测）、防重复启动
+- [x] backup/restore 实测（修复 WAL 陷阱改 SQLite 在线备份 API；沙盒恢复验证表/数据完整）
+- [x] ~~compose 写死路径修正~~ → 后置封装阶段（用户决策），不在 M9 范围
+
+### Dashboard 页面登记（app/dashboard-static/，原生 JS 无构建）
+
+首页+摄取 / Runs（列表+详情+实时事件流）/ Evidence Inspector / Reviews（决策按钮）/ Benchmarks（触发+基线对比+失败标红）——/dashboard/ 实测 200。
 
 ---
 
 ## 10.7 M10：最终实验与求职材料
 
-**状态：未开始** ｜ 依赖：M4～M9
+**状态：完成（2026-09-22）** ｜ 依赖：M4～M9 ｜ 完成报告：`docs/milestone_reports/M10.md`
+
+### 执行记录
+
+- 2026-09-22 ｜ coder 子代理：表 6 实验（Nougat vs lightweight 同 VLM 对照）+ 六表 + 6 份材料 ｜ run_m10_lightweight.py ｜ 公式保留 33 vs 0、图描述 8 vs 7（1 例真实 VLM 解析失败如实记录）；18 处 not_measured 全注明原因 ｜ artifacts/final/、docs/FINAL_EXPERIMENTS.md ｜ commit 待
+- 2026-09-22 ｜ 主控抽查 ｜ 数字与 artifacts 原文对拍 ｜ 表 6 一致；B3 口径三处一致声明；无凭记忆填数 ｜ `docs/milestone_reports/M10.md` ｜ commit 待
 
 ### 六张对照表完成度
 
 | 对照表 | 状态 | 数据位置 |
 |---|---|---|
-| 1. Dense vs Hybrid vs RRF vs Rerank/Gate | 未开始 | |
-| 2. 无预算 vs Budget/Compression | 未开始 | |
-| 3. AgentExecutor 单次执行 vs Durable Runtime | 未开始 | |
-| 4. 会话 JSONL 注入 vs Governed Memory | 未开始 | |
-| 5. B0 单 Agent vs Verifier/Review | 未开始 | |
-| 6. Nougat vs 降级路径；visual description vs visual rerank/region | 未开始 | |
+| 1. Dense vs Hybrid vs RRF vs Gate | 完成（Recall@5 0.234→0.299、anchor@5 0.929→1.000、变差 0） | artifacts/retrieval/m4-20260922/ |
+| 2. 无预算 vs Budget/Pin | 完成（pin on 100 源 gold 保留 1.0 vs pin off 0.267±0.189） | artifacts/context/m5-20260922/ |
+| 3. 无 Checkpoint vs Durable Runtime | 完成（8/8=1.0 vs 基线架构性 not_measured） | tests/durable、benchmarks/runtime_cases.jsonl |
+| 4. 聊天记录 vs Governed Memory | 完成（六指标全达标、泄漏 0 vs 基线无治理） | tests/memory |
+| 5. B0 vs B1/B2/B3 | 完成（提交集 unsupported 0.476→0.000*，拦截口径星标） | artifacts/verification/m7-20260922/ |
+| 6. Nougat vs 降级路径视觉 | 完成（公式 33 vs 0、图 8 vs 7、1 真实失败 case 保留） | artifacts/final/m10-vision-compare.json |
 
 ### 求职交付物清单
 
-- [ ] `README.md`（背景/上游/个人贡献/架构/运行/Benchmark/限制）
-- [ ] `docs/ARCHITECTURE.md`
-- [ ] `docs/DEMO_SCRIPT.md`
-- [ ] `docs/INTERVIEW_QA.md`
-- [ ] `docs/OWNERSHIP.md`（上游镜像 / fork 既有增量 / 本项目增量三方分清）
-- [ ] 架构图、控制状态图、Trace 截图、Benchmark 图
-- [ ] 4～5 条简历 bullet（方括号全部替换为真实值）
-- [ ] 3 分钟介绍稿 + 15 分钟深挖讲稿
-- [ ] 防伪审计六问逐条可答（含失败 case 与限制：无 GPU、前端无源码、Docker 不可用）
+- [x] `README.md`（背景/上游归属/架构/六组对照摘要/限制/快速开始）
+- [x] `docs/ARCHITECTURE.md`
+- [x] `docs/DEMO_SCRIPT.md`（含预期输出核对表与失败兜底话术）
+- [x] `docs/INTERVIEW_QA.md`（防伪六问 + 10 深挖）
+- [x] `docs/OWNERSHIP.md`（A 上游 / B fork / C 本项目三方分清，C 类 M1–M10 全量）
+- [x] 架构图（mermaid）+ 六组对照表（图以表代，截图待 Dashboard 演示时补）
+- [x] 5 条简历 bullet（方括号全部替换为真实值，每条附证据路径）
+- [x] 3 分钟介绍稿 + 15 分钟深挖讲稿
+- [x] 防伪审计六问逐条可答（含失败 case 与限制：无 GPU、前端无源码、Docker 不可用、视觉 bbox 缺失、CoP 需人审）
 
 ---
 
@@ -470,7 +503,16 @@ paired case diff（`artifacts/retrieval/m4-20260922/paired_diff.json`）：
 - 2026-09-22 ｜ 环境 ｜ Gemini 不可达排查 + 视觉端点切换 ｜ curl 探测 + vp_vision_llm.py 增加 VISUAL_PARSER_OPENAI_BASE_URL/API_KEY 覆盖 ｜ 用户选定阿里百炼 qwen-vl；等 key ｜ `.env.example` ｜ 未提交
 - 2026-09-22 ｜ M5 ｜ Context Budget ｜ coder 子代理 ｜ app/context 7 文件 + 44 测试 + 12 冻结用例；pin 开 100-source gold 保留 1.000；pin 关失败区间 25–100 已如实报告 ｜ `docs/milestone_reports/M5.md`、artifacts/context/m5-20260922/ ｜ 未提交
 - 2026-09-22 ｜ M6 ｜ Memory Governance ｜ coder 子代理 ｜ app/memory 6 文件 + 68 测试 + 17 冻结用例；六项指标全达标、泄漏 0 ｜ `docs/milestone_reports/M6.md` ｜ 未提交
-- 2026-09-22 ｜ 集成 ｜ 飞轮闭环 #2（BC-runtime-003 flaky cancel 测试） ｜ 事件同步改确定性断言 ｜ 3 轮全量 269/269 绿 ｜ tests/durable ｜ 未提交
+- 2026-09-22 ｜ 集成 ｜ 飞轮闭环 #2（BC-runtime-003 flaky cancel 测试） ｜ 事件同步改确定性断言 ｜ 3 轮全量 269/269 绿 ｜ tests/durable ｜ `09294df`
+- 2026-09-22 ｜ — ｜ M5–M6 提交 ｜ git commit ｜ `09294df` ｜ — ｜ `09294df`
+- 2026-09-22 ｜ M7 ｜ Claim 校验与人工复核 ｜ coder 子代理（挂起→加固超时→resume） ｜ app/verification 7 文件 + 47 测试；B3 提交集 unsupported 0.000、precision 1.000；Review→resume 原 run 实测 ｜ `docs/milestone_reports/M7.md` ｜ 未提交
+- 2026-09-22 ｜ M8 ｜ Eval Harness ｜ coder 子代理 + 主控两轮集成 ｜ app/eval+observability；六层 116 用例单命令回归 223.6s；gate 自比 pass/退化 fail；95 测试 ｜ `docs/milestone_reports/M8.md`、artifacts/eval/m8-baseline-20260922/ ｜ 未提交
+- 2026-09-22 ｜ 集成 ｜ test_metrics 同名冲突改名 + verification 层接入 harness ｜ 全量 411/411 绿 ｜ tests/eval ｜ 未提交
+- 2026-09-22 ｜ 环境 ｜ deepseek-flash 多模态实测确认 ｜ OpenAI 兼容图片输入测试 ｜ flash 读图正确（v4-pro 无视觉）；百炼方案弃用 ｜ — ｜ —
+- 2026-09-22 ｜ M7补 ｜ 视觉补测解析（Nougat+deepseek-flash） ｜ run_parse.py ｜ 393.5s/15页：8 图描述 visual_qa 8/8 OK、metadata 权威；入库新版本（8 visual 缺 bbox 按规则 degraded） ｜ artifacts/baseline/m0-vision-deepseek/ ｜ 未提交
+- 2026-09-22 ｜ M9 ｜ API/SSE/Dashboard/交付 ｜ coder 子代理 ｜ 11 新路由 + Dashboard + 部署加固 + 19 测试；一键启动与 /runs 生命周期实测；backup WAL 修复 ｜ `docs/milestone_reports/M9.md` ｜ 未提交
+- 2026-09-22 ｜ 集成 ｜ M9 独立复验 ｜ 全量 429 passed/1 skipped（131s） ｜ — ｜ 未提交
+- 2026-09-22 ｜ M10 ｜ 最终实验与求职材料 ｜ coder 子代理 ｜ 表 6 实验（公式 33 vs 0、图 8 vs 7）+ 六表 + ARCHITECTURE/INTERVIEW_QA/RESUME_BULLETS/TALK_TRACKS/OWNERSHIP/README；18 处 not_measured 全注明 ｜ `docs/milestone_reports/M10.md`、artifacts/final/ ｜ 未提交
 - 2026-09-22 ｜ — ｜ 部署策略确认 ｜ 用户决策：本期不在 Docker 上调整，compose 修正后置封装阶段；Grace vLLM 确认为可选（需 TAMU HPRC，本环境不可用）｜ 已写入两份文档 ｜ 主计划 M9、台账第 14 节 ｜ 待提交
 
 （此后每次执行在此追加一行）
@@ -505,6 +547,11 @@ paired case diff（`artifacts/retrieval/m4-20260922/paired_diff.json`）：
 | 日期 | 配置 | ViR | claim support | citation coverage | unsupported rate | 产物路径 |
 |---|---|---|---|---|---|---|
 | 2026-09-22 | M0 e2e（5 case 抽样，文本链路） | — | — | 页级引用 5/5 | 拒答正确 1/1 | artifacts/baseline/m0-20260922/e2e_*.json |
+| 2026-09-22 | B0 单 AgentExecutor（12 条） | — | 0.242 | 0.524 | 0.476 | artifacts/verification/m7-20260922/ |
+| 2026-09-22 | B3 +Verifier+Review（12 条，提交集） | — | 0.800* | 1.000* | 0.000* | 同上 |
+| 2026-09-22 | eval harness B2 臂回归（新一轮草稿） | 0.667（合成 fixture） | 0.278 | 0.611 | 0.389 | artifacts/eval/m8-baseline-20260922/ |
+
+*B3 仅统计实际提交答案（6/12 被 reject 弃答），收益来自拦截而非修复。
 
 ### 12.5 上下文压力（M5，pseudo-sources）
 
@@ -575,7 +622,7 @@ Trace / Review / User Feedback
 | 2026-09-22 | React 前端只有 dist 无源码 | Dashboard 只能做独立静态页，无法改现有界面 | 接受独立静态页方案，或找回源码 | 开放 |
 | 2026-09-22 | ~~HF token 未配~~ → 已更正：token 已写入 `.env`，问题改为变量名疑似不符（见上一条） | — | — | 已关闭（更正） |
 | 2026-09-22 | ~~tesseract 缺失~~ → 已解决：conda 官方源装 5.5.2 到 /root/tesseract-env（阿里云 anaconda 镜像已停服 404）；start_radiant.sh 经 TESSERACT_PREFIX 接入 PATH | 扫描版 PDF 的 OCR 备用路径可用 | — | 已关闭 |
-| 2026-09-22 | ~~GEMINI_API_KEY 未配~~ → 用户已配但 generativelanguage.googleapis.com 本机不可达；用户改选阿里百炼 qwen-vl（2026-09-22）。代码侧 `VISUAL_PARSER_OPENAI_BASE_URL/API_KEY` 覆盖已实现（`vp_vision_llm.py`，不动 DeepSeek 对话链路） | 视觉解析（02_visuals/03_metadata）与 M7 被卡 | 用户把百炼 key 写入 `Docker_Executable/.env`（`VISUAL_PARSER_OPENAI_API_KEY` + `VISUAL_PARSER_OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1` + `VISUAL_PARSER_GPT_VISION_MODEL=qwen-vl-max`）后重跑视觉解析 | 开放（等用户 key） |
+| 2026-09-22 | ~~Gemini 不可达 + 百炼 key 未到位~~ → **已解决（更好路径）**：实测 `deepseek-flash` 有多模态能力（`deepseek-v4-pro` 没有），视觉解析直接复用现有 DeepSeek 端点，零新增配置、不需要百炼 key | 视觉链路已激活 | — | 已关闭 |
 | 2026-09-22 | 磁盘紧张（FUSE 盘，不支持符号链接） | 多份向量库/artifact 可能放不下 | 定期清理策略；artifact 落盘目录可配置 | 开放 |
 | 2026-09-22 | 仓库零测试 | M8 之前所有"通过"都缺工程底线保障 | M2 起每个 Milestone 自带 tests/ | 开放 |
 

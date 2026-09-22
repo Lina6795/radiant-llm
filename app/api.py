@@ -557,6 +557,858 @@ def list_documents(
     return result
 
 
+# ---------------------------------------------------------------------------
+# RADIANT-Control M9: control-plane API (runs / reviews / benchmarks / ingest)
+# plus the standalone Operations Dashboard static mount.
+# Everything in this block is APPEND-ONLY and registered BEFORE the frontend
+# catch-all below so API routes are never shadowed.
+# ---------------------------------------------------------------------------
+import sqlite3 as _sqlite3
+import subprocess as _subprocess
+import sys as _sys
+import time as _time
+import uuid as _uuid
+from datetime import datetime as _datetime, timezone as _timezone
+
+from fastapi import Header as _Header, Response as _Response
+
+_M9_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_M9_REPO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_M9_REPO_ROOT))
+
+from app.control.budget import BudgetLedger as _BudgetLedger
+from app.control.models import (
+    Action as _Action,
+    Budgets as _Budgets,
+    ExecutionPlan as _ExecutionPlan,
+    Risk as _Risk,
+)
+from app.control.planner import RulePlanner as _RulePlanner
+from app.control.policy import PolicyEngine as _PolicyEngine, PolicyVerdict as _PolicyVerdict
+from app.control.registry import build_default_registry as _build_default_registry
+from app.control.router import RuleRouter as _RuleRouter
+from app.control.schema_guard import SchemaGuard as _SchemaGuard
+from app.durable.checkpoint import CheckpointStore as _CheckpointStore
+from app.durable.errors import RunNotFoundError as _RunNotFoundError
+from app.durable.events import EventStore as _EventStore
+from app.durable.graph import RunState as _RunState
+from app.durable.idempotency import PersistentIdempotencyLedger as _PersistentLedger
+from app.durable.lease import LeaseManager as _LeaseManager
+from app.durable.runner import DurableRunner as _DurableRunner, config_fingerprint as _config_fingerprint
+from app.verification.review import ReviewQueue as _ReviewQueue, ReviewStatus as _ReviewStatus
+
+# Run states after which the SSE event stream closes (waiting_review stays open).
+_SSE_CLOSED_STATES = {_RunState.SUCCEEDED, _RunState.CANCELLED, _RunState.FAILED}
+_SSE_MAX_SECONDS = 1800.0
+_SSE_POLL_SECONDS = 0.5
+
+
+def _m9_db_path(env_var: str, filename: str) -> str:
+    """Resolve a control-plane DB path: env override > RADIANT_LLM_CONFIG_DIR > repo root."""
+    override = os.getenv(env_var)
+    if override:
+        return override
+    config_dir = os.getenv("RADIANT_LLM_CONFIG_DIR")
+    base = Path(config_dir) if config_dir else _M9_REPO_ROOT
+    return str(base / filename)
+
+
+class RunRuntime:
+    """Process-wide control-plane runtime: one DurableRunner over the durable
+    SQLite stores, the M2 router/planner/guard/policy chain, the M7 review
+    queue, and an in-memory plan registry (plans are needed to resume runs;
+    review items persist their own plan_json, so review-driven resume also
+    survives restarts)."""
+
+    def __init__(self) -> None:
+        db = _m9_db_path("RADIANT_DURABLE_DB", "durable.db")
+        self.db_path = db
+        self.checkpoints = _CheckpointStore(db)
+        self.events = _EventStore(db)
+        self.leases = _LeaseManager(db)
+        self.ledger = _PersistentLedger(db)
+        self.registry = _build_default_registry()
+        budget_ledger = _BudgetLedger.with_defaults(["default", "readonly", "lowbudget", "full"])
+        self.policy = _PolicyEngine(registry=self.registry, ledger=budget_ledger)
+        self.guard = _SchemaGuard(registry=self.registry)
+        self.router = _RuleRouter()
+        self.planner = _RulePlanner(tool_catalog=self.registry.catalog())
+        self.runner = _DurableRunner(
+            registry=self.registry,
+            checkpoints=self.checkpoints,
+            events=self.events,
+            leases=self.leases,
+            ledger=self.ledger,
+            owner="api-worker",
+            require_review=self._step_needs_review,
+        )
+        self.reviews = _ReviewQueue(_m9_db_path("RADIANT_REVIEW_DB", "review_queue.db"))
+        self.plans: Dict[str, _ExecutionPlan] = {}
+        self.workspaces: Dict[str, str] = {}
+        self.lock = threading.RLock()
+        # Review-gate bookkeeping: (run_id, step_id) pairs cleared by an
+        # approve/edit decision, plus the run_id of the executing thread so
+        # the runner's require_review(step) hook can consult it.
+        self.cleared_steps: set = set()
+        self._tl = threading.local()
+
+    def _step_needs_review(self, step) -> bool:
+        run_id = getattr(self._tl, "run_id", None)
+        if run_id is not None and (run_id, step.step_id) in self.cleared_steps:
+            return False
+        spec = self.registry.get(step.tool)
+        return step.risk == _Risk.EXTERNAL or bool(spec and spec.high_risk)
+
+
+_RUN_RUNTIME: _Optional[RunRuntime] = None
+_RUN_RUNTIME_LOCK = threading.Lock()
+
+
+def get_run_runtime() -> RunRuntime:
+    global _RUN_RUNTIME
+    if _RUN_RUNTIME is None:
+        with _RUN_RUNTIME_LOCK:
+            if _RUN_RUNTIME is None:
+                _RUN_RUNTIME = RunRuntime()
+    return _RUN_RUNTIME
+
+
+def _review_risk_reasons(rt: RunRuntime, plan: _ExecutionPlan, step_states: Dict[str, Any]) -> List[str]:
+    reasons: List[str] = []
+    for step in plan.steps:
+        state = step_states.get(step.step_id)
+        state_value = state.value if hasattr(state, "value") else str(state)
+        if state_value != "waiting_review":
+            continue
+        spec = rt.registry.get(step.tool)
+        if step.risk == _Risk.EXTERNAL:
+            reasons.append(f"policy.external_review:{step.tool}")
+        elif spec is not None and spec.high_risk:
+            reasons.append(f"policy.high_risk_review:{step.tool}")
+        else:
+            reasons.append(f"policy.review:{step.tool}")
+    return reasons or ["policy.review:unknown"]
+
+
+def _maybe_enqueue_review(rt: RunRuntime, plan: _ExecutionPlan, workspace: str, report) -> None:
+    """When a background run pauses in waiting_review, enqueue one M7 review
+    item (deduplicated per run while a pending item exists)."""
+    status = getattr(report, "status", None)
+    if status != _RunState.WAITING_REVIEW:
+        return
+    run_id = str(plan.run_id)
+    with rt.lock:
+        for item in rt.reviews.for_run(run_id):
+            if item["status"] == _ReviewStatus.PENDING.value:
+                return
+        rt.reviews.enqueue(
+            run_id=run_id,
+            claims=[],
+            evidence_snapshot=[],
+            risk_reasons=_review_risk_reasons(rt, plan, report.step_states),
+            plan=plan,
+            workspace=workspace,
+            metadata={"source": "api", "goal": plan.goal, "reason": getattr(report, "reason", "")},
+        )
+
+
+def _execute_plan_bg(rt: RunRuntime, plan: _ExecutionPlan, workspace: str) -> None:
+    rt._tl.run_id = str(plan.run_id)
+    try:
+        report = rt.runner.run(plan, workspace=workspace)
+    except Exception as exc:  # background thread: never propagate
+        appendStreamEventLog("run_bg_error", f"run_id={plan.run_id} {type(exc).__name__}: {exc}")
+        return
+    finally:
+        rt._tl.run_id = None
+    _maybe_enqueue_review(rt, plan, workspace, report)
+
+
+def _resume_plan_bg(rt: RunRuntime, plan: _ExecutionPlan, workspace: str) -> None:
+    rt._tl.run_id = str(plan.run_id)
+    try:
+        report = rt.runner.resume(plan, workspace=workspace, force_takeover=True)
+    except Exception as exc:
+        appendStreamEventLog("run_resume_bg_error", f"run_id={plan.run_id} {type(exc).__name__}: {exc}")
+        return
+    finally:
+        rt._tl.run_id = None
+    _maybe_enqueue_review(rt, plan, workspace, report)
+
+
+def _resume_review_bg(rt: RunRuntime, review_id: str) -> None:
+    item = rt.reviews.get(review_id)
+    if item is None:
+        return
+    plan = _ExecutionPlan.model_validate_json(item["plan_json"])
+    run_id = str(plan.run_id)
+    # An approve/edit decision clears the review gate for the step this item
+    # was enqueued for, so the resumed run passes the gate instead of
+    # pausing again on the same step.
+    reason = str((item.get("metadata") or {}).get("reason", ""))
+    if item["status"] in {_ReviewStatus.APPROVED.value, _ReviewStatus.EDITED.value} and reason.startswith("waiting_review:"):
+        with rt.lock:
+            rt.cleared_steps.add((run_id, reason.split(":", 1)[1]))
+    rt._tl.run_id = run_id
+    try:
+        report = rt.reviews.resume_decided(review_id, rt.runner)
+    except Exception as exc:
+        appendStreamEventLog("review_resume_bg_error", f"review_id={review_id} {type(exc).__name__}: {exc}")
+        return
+    finally:
+        rt._tl.run_id = None
+    _maybe_enqueue_review(rt, plan, item["workspace"], report)
+
+
+def _plan_steps_payload(plan: _ExecutionPlan) -> List[Dict[str, Any]]:
+    return [
+        {
+            "step_id": s.step_id,
+            "tool": s.tool,
+            "risk": s.risk.value,
+            "depends_on": list(s.depends_on),
+            "retry_policy": s.retry_policy.value,
+            "timeout_ms": s.timeout_ms,
+        }
+        for s in plan.steps
+    ]
+
+
+@app.post("/runs", tags=["runs"])
+def create_run(payload: Dict[str, Any], response: _Response) -> Dict[str, Any]:
+    """Create a durable run: router -> planner -> guard -> policy -> DurableRunner
+    (background thread). Returns the run_id; non-tool-call router outcomes
+    (respond/clarify/abstain) return without a run."""
+    goal = (payload.get("goal") or payload.get("query") or "").strip()
+    if not goal:
+        raise HTTPException(status_code=400, detail="Field 'goal' (or 'query') is required.")
+    workspace = (payload.get("workspace") or "default").strip() or "default"
+
+    rt = get_run_runtime()
+    try:
+        decision = rt.router(goal)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"router_error:{type(exc).__name__}")
+
+    if decision.action != _Action.TOOL_CALL:
+        return {
+            "run_id": None,
+            "status": decision.action.value,
+            "reason_codes": list(decision.reason_codes),
+            "detail": "router did not select tool_call; no run created",
+        }
+
+    try:
+        raw_plan = rt.planner(decision, goal)
+        plan = raw_plan if isinstance(raw_plan, _ExecutionPlan) else _ExecutionPlan.model_validate(raw_plan)
+    except Exception:
+        raise HTTPException(status_code=422, detail={"code": "planner.invalid_output", "reason_codes": []})
+
+    budgets_override = payload.get("budgets") or {}
+    if budgets_override:
+        merged = plan.budgets.model_dump()
+        for key in ("max_tokens", "max_tool_calls", "max_wall_time_ms"):
+            if key in budgets_override:
+                try:
+                    merged[key] = int(budgets_override[key])
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail=f"budgets.{key} must be an integer")
+        try:
+            plan = plan.model_copy(update={"budgets": _Budgets(**merged)})
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid budgets override")
+
+    guard = rt.guard.validate(plan)
+    if not guard.ok:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "plan_rejected", "reason_codes": list(guard.reason_codes)},
+        )
+
+    policy = rt.policy.authorize(plan, workspace)
+    if policy.verdict == _PolicyVerdict.DENY:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "policy_denied", "reason_codes": list(policy.reason_codes), "detail": policy.detail},
+        )
+
+    run_id = str(plan.run_id)
+    with rt.lock:
+        rt.plans[run_id] = plan
+        rt.workspaces[run_id] = workspace
+    worker = threading.Thread(target=_execute_plan_bg, args=(rt, plan, workspace), daemon=True)
+    worker.start()
+
+    response.status_code = 202
+    return {
+        "run_id": run_id,
+        "status": "running",
+        "goal": goal,
+        "workspace": workspace,
+        "policy_verdict": policy.verdict.value,
+        "reason_codes": list(policy.reason_codes),
+        "config_fingerprint": _config_fingerprint(plan, rt.registry),
+        "steps": _plan_steps_payload(plan),
+    }
+
+
+def _list_run_records(rt: RunRuntime, limit: int, offset: int) -> Dict[str, Any]:
+    """Read-only run listing straight from the durable SQLite file (the M3
+    CheckpointStore intentionally has no list API; this is a read-only view
+    over the same file and never writes)."""
+    if not os.path.exists(rt.db_path):
+        return {"total": 0, "items": []}
+    conn = _sqlite3.connect(f"file:{rt.db_path}?mode=ro", uri=True)
+    conn.row_factory = _sqlite3.Row
+    try:
+        total = conn.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"]
+        rows = conn.execute(
+            "SELECT run_id, goal, workspace, state, owner, config_fingerprint,"
+            " cancel_requested, created_at, updated_at FROM runs"
+            " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    finally:
+        conn.close()
+    items = []
+    for row in rows:
+        item = dict(row)
+        item["cancel_requested"] = bool(item["cancel_requested"])
+        items.append(item)
+    return {"total": total, "limit": limit, "offset": offset, "items": items}
+
+
+@app.get("/runs", tags=["runs"])
+def list_runs(limit: int = _Query(100, ge=1, le=1000), offset: int = _Query(0, ge=0)) -> Dict[str, Any]:
+    return _list_run_records(get_run_runtime(), limit, offset)
+
+
+def _run_snapshot(rt: RunRuntime, run_id: str) -> Dict[str, Any]:
+    record = rt.checkpoints.get_run(run_id)  # raises RunNotFoundError
+    checkpoints = rt.checkpoints.load_checkpoints(run_id)
+    plan = rt.plans.get(run_id)
+    steps: List[Dict[str, Any]] = []
+    seen = set()
+    if plan is not None:
+        for step in plan.steps:
+            cp = checkpoints.get(step.step_id)
+            steps.append(
+                {
+                    "step_id": step.step_id,
+                    "tool": step.tool,
+                    "risk": step.risk.value,
+                    "depends_on": list(step.depends_on),
+                    "state": cp.state.value if cp else "pending",
+                    "attempt": cp.attempt if cp else 0,
+                    "error": cp.error if cp else None,
+                    "artifacts": list(cp.artifacts) if cp else [],
+                    "output": cp.output if cp else None,
+                }
+            )
+            seen.add(step.step_id)
+    for step_id, cp in sorted(checkpoints.items()):
+        if step_id in seen:
+            continue
+        steps.append(
+            {
+                "step_id": step_id,
+                "tool": None,
+                "risk": None,
+                "depends_on": [],
+                "state": cp.state.value,
+                "attempt": cp.attempt,
+                "error": cp.error,
+                "artifacts": list(cp.artifacts),
+                "output": cp.output,
+            }
+        )
+    return {
+        "run_id": record.run_id,
+        "goal": record.goal,
+        "workspace": record.workspace,
+        "state": record.state.value,
+        "owner": record.owner,
+        "config_fingerprint": record.config_fingerprint,
+        "cancel_requested": record.cancel_requested,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "latest_event_seq": rt.events.latest_seq(run_id),
+        "steps": steps,
+    }
+
+
+@app.get("/runs/{run_id}", tags=["runs"])
+def get_run(run_id: str) -> Dict[str, Any]:
+    rt = get_run_runtime()
+    try:
+        return _run_snapshot(rt, run_id)
+    except _RunNotFoundError:
+        raise HTTPException(status_code=404, detail=f"run '{run_id}' not found")
+
+
+@app.get("/runs/{run_id}/events", tags=["runs"])
+def stream_run_events(
+    run_id: str,
+    last_event_id: _Optional[str] = _Header(None, alias="Last-Event-ID"),
+):
+    """SSE replay/tail of the M3 event log. Reconnect with Last-Event-ID set
+    to the last received ``id:`` (the event seq) to resume without gaps."""
+    rt = get_run_runtime()
+    try:
+        rt.checkpoints.get_run(run_id)
+    except _RunNotFoundError:
+        raise HTTPException(status_code=404, detail=f"run '{run_id}' not found")
+
+    try:
+        after_seq = int(last_event_id) if last_event_id else 0
+    except ValueError:
+        after_seq = 0
+
+    def event_generator():
+        seq = after_seq
+        started = _time.monotonic()
+        last_heartbeat = started
+        while True:
+            events = rt.events.stream(run_id, after_seq=seq)
+            for ev in events:
+                seq = ev.seq
+                body = dict(ev.payload)
+                body["run_id"] = ev.run_id
+                body["created_at"] = ev.created_at
+                yield f"id: {ev.seq}\nevent: {ev.type.value}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
+            state = rt.checkpoints.get_run(run_id).state
+            if state in _SSE_CLOSED_STATES:
+                break
+            if _time.monotonic() - started > _SSE_MAX_SECONDS:
+                break
+            now = _time.monotonic()
+            if now - last_heartbeat >= 15.0:
+                last_heartbeat = now
+                yield ": keep-alive\n\n"
+            _time.sleep(_SSE_POLL_SECONDS)
+        yield "event: end\ndata: {}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/runs/{run_id}/cancel", tags=["runs"])
+def cancel_run(run_id: str) -> Dict[str, Any]:
+    rt = get_run_runtime()
+    try:
+        record = rt.checkpoints.get_run(run_id)
+    except _RunNotFoundError:
+        if run_id in rt.plans:
+            # The background thread has not created the run record yet; the
+            # in-memory token still reaches it (checked before every node).
+            rt.runner.cancel_token(run_id).cancel()
+            return {"run_id": run_id, "status": "cancel_requested"}
+        raise HTTPException(status_code=404, detail=f"run '{run_id}' not found")
+    if record.state in {_RunState.SUCCEEDED, _RunState.CANCELLED}:
+        return {"run_id": run_id, "status": record.state.value, "detail": "run already terminal"}
+    rt.runner.cancel(run_id)
+    return {"run_id": run_id, "status": "cancel_requested"}
+
+
+@app.post("/runs/{run_id}/resume", tags=["runs"])
+def resume_run(run_id: str) -> Dict[str, Any]:
+    rt = get_run_runtime()
+    try:
+        record = rt.checkpoints.get_run(run_id)
+    except _RunNotFoundError:
+        raise HTTPException(status_code=404, detail=f"run '{run_id}' not found")
+    if record.state in {_RunState.SUCCEEDED, _RunState.CANCELLED}:
+        raise HTTPException(status_code=409, detail=f"run '{run_id}' is terminal ({record.state.value})")
+    plan = rt.plans.get(run_id)
+    if plan is None:
+        raise HTTPException(
+            status_code=409,
+            detail="plan for this run is not in this process' memory; "
+            "resume through its review item (POST /reviews/{id}/decision) after a restart",
+        )
+    workspace = rt.workspaces.get(run_id, record.workspace)
+    worker = threading.Thread(target=_resume_plan_bg, args=(rt, plan, workspace), daemon=True)
+    worker.start()
+    return {"run_id": run_id, "status": "resuming"}
+
+
+# ---------------------------------------------------------------------------
+# M9: Human review queue (M7 ReviewQueue over the API runner)
+# ---------------------------------------------------------------------------
+
+@app.get("/reviews", tags=["reviews"])
+def list_reviews(run_id: _Optional[str] = None) -> Dict[str, Any]:
+    """List review items. Default: the pending queue. Pass run_id to see every
+    item (including decided ones) for one run."""
+    rt = get_run_runtime()
+    items = rt.reviews.for_run(run_id) if run_id else rt.reviews.pending()
+    for item in items:
+        item.pop("plan_json", None)
+    return {"total": len(items), "items": items}
+
+
+@app.post("/reviews/{review_id}/decision", tags=["reviews"])
+def decide_review(review_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Record an approve/reject/edit decision and resume the ORIGINAL run in
+    the background (reject resumes with the cancel flag set)."""
+    decision = (payload.get("decision") or "").strip()
+    reviewer_id = (payload.get("reviewer_id") or "").strip()
+    rationale = (payload.get("rationale") or "").strip()
+    edited_answer = payload.get("edited_answer")
+    if decision not in {"approve", "reject", "edit"}:
+        raise HTTPException(status_code=400, detail="decision must be one of approve|reject|edit")
+    if not reviewer_id:
+        raise HTTPException(status_code=400, detail="Field 'reviewer_id' is required.")
+    rt = get_run_runtime()
+    try:
+        item = rt.reviews.decide(
+            review_id,
+            decision=decision,
+            reviewer_id=reviewer_id,
+            rationale=rationale,
+            edited_answer=edited_answer,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"review '{review_id}' not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    item.pop("plan_json", None)
+    worker = threading.Thread(target=_resume_review_bg, args=(rt, review_id), daemon=True)
+    worker.start()
+    return {"status": "decided", "resume": "started", "item": item}
+
+
+# ---------------------------------------------------------------------------
+# M9: Benchmark runs (M8 eval runner as a background subprocess)
+# ---------------------------------------------------------------------------
+
+_EVAL_OUT_ROOT = _M9_REPO_ROOT / "artifacts" / "eval"
+_DEFAULT_BENCHMARK_BASELINE = _EVAL_OUT_ROOT / "m8-baseline-20260922"
+_BENCHMARK_JOBS: Dict[str, Dict[str, Any]] = {}
+_BENCHMARK_LOCK = threading.Lock()
+
+
+def _benchmark_layers() -> List[str]:
+    from eval.registry import LAYERS
+
+    return list(LAYERS)
+
+
+def _write_benchmark_job(out_dir: Path, job: Dict[str, Any]) -> None:
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "job.json").write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _watch_benchmark(job_id: str, proc: "_subprocess.Popen", out_dir: Path) -> None:
+    exit_code = proc.wait()
+    with _BENCHMARK_LOCK:
+        job = _BENCHMARK_JOBS.get(job_id)
+        if job is None:
+            return
+        job["status"] = "done" if exit_code == 0 else "failed"
+        job["exit_code"] = exit_code
+        job["finished_at"] = _datetime.now(_timezone.utc).isoformat()
+        _write_benchmark_job(out_dir, job)
+
+
+@app.post("/benchmarks/run", tags=["benchmarks"])
+def run_benchmark(payload: Dict[str, Any], response: _Response) -> Dict[str, Any]:
+    """Run the M8 eval harness in a background subprocess. ``layers`` is
+    optional (default: all registered layers)."""
+    known = _benchmark_layers()
+    layers = payload.get("layers")
+    if layers is None:
+        layers = known
+    if not isinstance(layers, list) or not layers:
+        raise HTTPException(status_code=400, detail="'layers' must be a non-empty list (or omitted for all).")
+    unknown = [l for l in layers if l not in known]
+    if unknown:
+        raise HTTPException(status_code=422, detail={"code": "unknown_layers", "unknown": unknown, "known": known})
+
+    baseline = payload.get("baseline")
+    baseline_path = Path(baseline) if baseline else _DEFAULT_BENCHMARK_BASELINE
+    if not baseline_path.is_absolute():
+        baseline_path = _M9_REPO_ROOT / baseline_path
+    if not baseline_path.exists():
+        raise HTTPException(status_code=400, detail=f"baseline not found: {baseline_path}")
+
+    benchmark_id = "m9-" + _datetime.now(_timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + _uuid.uuid4().hex[:6]
+    out_dir = _EVAL_OUT_ROOT / benchmark_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / "runner.log"
+    cmd = [_sys.executable, "-m", "eval.runner"]
+    if layers == known:
+        cmd.append("--all")
+    else:
+        for layer in layers:
+            cmd += ["--layer", layer]
+    cmd += ["--out", str(out_dir), "--baseline", str(baseline_path)]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = "app" + os.pathsep + env.get("PYTHONPATH", "")
+
+    job = {
+        "benchmark_id": benchmark_id,
+        "status": "running",
+        "layers": layers,
+        "baseline": str(baseline_path),
+        "out_dir": str(out_dir),
+        "log": str(log_path),
+        "started_at": _datetime.now(_timezone.utc).isoformat(),
+        "finished_at": None,
+        "exit_code": None,
+    }
+    log_fh = open(log_path, "a", encoding="utf-8")
+    try:
+        proc = _subprocess.Popen(cmd, cwd=str(_M9_REPO_ROOT), stdout=log_fh, stderr=_subprocess.STDOUT, env=env)
+    except Exception as exc:
+        log_fh.close()
+        raise HTTPException(status_code=500, detail=f"failed to start eval runner: {exc}")
+    job["pid"] = proc.pid
+    with _BENCHMARK_LOCK:
+        _BENCHMARK_JOBS[benchmark_id] = job
+    _write_benchmark_job(out_dir, job)
+    watcher = threading.Thread(target=_watch_benchmark, args=(benchmark_id, proc, out_dir), daemon=True)
+    watcher.start()
+
+    response.status_code = 202
+    return {"benchmark_id": benchmark_id, "status": "running", "layers": layers, "out_dir": str(out_dir)}
+
+
+def _benchmark_report_digest(out_dir: Path) -> _Optional[Dict[str, Any]]:
+    report_path = out_dir / "report.json"
+    if not report_path.exists():
+        return None
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    failed_cases = [
+        {
+            "layer": layer,
+            "case_id": c.get("case_id"),
+            "dataset": c.get("dataset"),
+            "status": c.get("status"),
+            "error": c.get("error"),
+        }
+        for layer, lr in (report.get("layers") or {}).items()
+        for c in (lr.get("cases") or [])
+        if c.get("status") == "fail"
+    ]
+    return {
+        "run_id": report.get("run_id"),
+        "created_at": report.get("created_at"),
+        "summary": report.get("summary"),
+        "metrics_flat": report.get("metrics_flat"),
+        "baseline_comparison": report.get("baseline_comparison"),
+        "failed_cases": failed_cases,
+    }
+
+
+def _read_benchmark_job(out_dir: Path) -> _Optional[Dict[str, Any]]:
+    job_path = out_dir / "job.json"
+    if not job_path.exists():
+        return None
+    try:
+        return json.loads(job_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+@app.get("/benchmarks/{benchmark_id}", tags=["benchmarks"])
+def get_benchmark(benchmark_id: str) -> Dict[str, Any]:
+    with _BENCHMARK_LOCK:
+        job = _BENCHMARK_JOBS.get(benchmark_id)
+        job = dict(job) if job else None
+    out_dir = _EVAL_OUT_ROOT / benchmark_id
+    if job is None:
+        job = _read_benchmark_job(out_dir)
+    if job is None and not out_dir.exists():
+        raise HTTPException(status_code=404, detail=f"benchmark '{benchmark_id}' not found")
+    digest = _benchmark_report_digest(out_dir)
+    if job is None:
+        job = {"benchmark_id": benchmark_id, "status": "done" if digest else "unknown", "out_dir": str(out_dir)}
+    job["report"] = digest
+    return job
+
+
+@app.get("/benchmarks", tags=["benchmarks"])
+def list_benchmarks() -> Dict[str, Any]:
+    items: List[Dict[str, Any]] = []
+    seen = set()
+    with _BENCHMARK_LOCK:
+        for job in _BENCHMARK_JOBS.values():
+            seen.add(job["benchmark_id"])
+            items.append({k: v for k, v in job.items() if k != "report"})
+    if _EVAL_OUT_ROOT.exists():
+        for child in sorted(_EVAL_OUT_ROOT.iterdir(), reverse=True):
+            if not child.is_dir() or child.name in seen:
+                continue
+            digest = _benchmark_report_digest(child)
+            if digest is None:
+                continue
+            items.append(
+                {
+                    "benchmark_id": child.name,
+                    "status": "done",
+                    "created_at": digest.get("created_at"),
+                    "summary": digest.get("summary"),
+                }
+            )
+    return {"total": len(items), "items": items}
+
+
+# ---------------------------------------------------------------------------
+# M9: document ingestion jobs (parse -> evidence store)
+# ---------------------------------------------------------------------------
+
+_INGEST_JOBS: Dict[str, Dict[str, Any]] = {}
+_INGEST_LOCK = threading.Lock()
+_KB_JSONL_FILES = ("01_chunks_kb.jsonl", "02_visuals_kb.jsonl", "03_metadata_kb.jsonl")
+
+
+def _ingest_job_update(job_id: str, **fields: Any) -> None:
+    with _INGEST_LOCK:
+        job = _INGEST_JOBS.get(job_id)
+        if job is not None:
+            job.update(fields)
+
+
+def _run_ingest_job(job_id: str, input_dir: Path, workspace_id: str, source_dir: _Optional[str], vision_model: _Optional[str], parse: bool, text_mode: str) -> None:
+    _ingest_job_update(job_id, status="running", started_at=_datetime.now(_timezone.utc).isoformat())
+    try:
+        kb_dir = input_dir
+        has_kb = any((input_dir / name).exists() for name in _KB_JSONL_FILES)
+        if not has_kb:
+            has_pdfs = any(p.suffix.lower() == ".pdf" for p in input_dir.rglob("*") if p.is_file())
+            if has_pdfs and parse:
+                _ingest_job_update(job_id, phase="parse")
+                from utils.vp_config import ParserConfig
+                from utils.vp_pipeline import run_pipeline
+
+                config_kwargs: Dict[str, Any] = {
+                    "input_dir": str(input_dir),
+                    "output_dir": str(input_dir),
+                    "text_mode": text_mode,
+                }
+                if vision_model:
+                    config_kwargs["gpt_vision_model"] = vision_model
+                parse_result = run_pipeline(ParserConfig(**config_kwargs))
+                _ingest_job_update(job_id, parse_result={k: v for k, v in parse_result.items() if isinstance(v, (int, str))})
+                has_kb = any((input_dir / name).exists() for name in _KB_JSONL_FILES)
+            if not has_kb:
+                _ingest_job_update(
+                    job_id,
+                    status="failed",
+                    finished_at=_datetime.now(_timezone.utc).isoformat(),
+                    error="no KB JSONL files found in input_dir and nothing to parse "
+                    "(expected 01_chunks_kb.jsonl etc. or PDF files with parse=true)",
+                )
+                return
+        _ingest_job_update(job_id, phase="ingest")
+        store = _get_evidence_store()
+        try:
+            result = store.ingest_directory(
+                kb_dir,
+                workspace_id=workspace_id,
+                source_dir=source_dir,
+                vision_model=vision_model,
+            )
+        finally:
+            store.close()
+        _ingest_job_update(
+            job_id,
+            status="done",
+            phase=None,
+            finished_at=_datetime.now(_timezone.utc).isoformat(),
+            result={
+                "workspace_id": result.get("workspace_id"),
+                "documents": result.get("documents"),
+                "new_records": result.get("new_records"),
+                "failed": result.get("failed"),
+                "rejected_rows": len(result.get("rejected_rows") or []),
+            },
+        )
+    except Exception as exc:  # background job: record, never raise
+        _ingest_job_update(
+            job_id,
+            status="failed",
+            phase=None,
+            finished_at=_datetime.now(_timezone.utc).isoformat(),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+@app.post("/documents/ingest", tags=["evidence"])
+def ingest_documents(payload: Dict[str, Any], response: _Response) -> Dict[str, Any]:
+    """Ingest a directory into the evidence store in the background. The
+    directory either already contains KB JSONL output (01_chunks_kb.jsonl …)
+    or PDFs to parse first (parse=true, default)."""
+    input_dir_raw = (payload.get("input_dir") or "").strip()
+    if not input_dir_raw:
+        raise HTTPException(status_code=400, detail="Field 'input_dir' is required.")
+    input_dir = Path(input_dir_raw)
+    if not input_dir.is_dir():
+        raise HTTPException(status_code=400, detail=f"input_dir is not a directory: {input_dir_raw}")
+    workspace_id = (payload.get("workspace_id") or "default").strip() or "default"
+    parse = bool(payload.get("parse", True))
+    text_mode = payload.get("text_mode") or "lightweight"
+    if text_mode not in ("nougat", "lightweight"):
+        raise HTTPException(status_code=400, detail="text_mode must be 'nougat' or 'lightweight'")
+    job_id = "ing-" + _uuid.uuid4().hex[:12]
+    with _INGEST_LOCK:
+        _INGEST_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "phase": None,
+            "input_dir": str(input_dir),
+            "workspace_id": workspace_id,
+            "created_at": _datetime.now(_timezone.utc).isoformat(),
+            "started_at": None,
+            "finished_at": None,
+            "result": None,
+            "error": None,
+        }
+    worker = threading.Thread(
+        target=_run_ingest_job,
+        args=(job_id, input_dir, workspace_id, payload.get("source_dir"), payload.get("vision_model"), parse, text_mode),
+        daemon=True,
+    )
+    worker.start()
+    response.status_code = 202
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/documents/ingest/{job_id}", tags=["evidence"])
+def get_ingest_job(job_id: str) -> Dict[str, Any]:
+    with _INGEST_LOCK:
+        job = _INGEST_JOBS.get(job_id)
+        job = dict(job) if job else None
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"ingest job '{job_id}' not found")
+    return job
+
+
+# ---------------------------------------------------------------------------
+# M9: standalone Operations Dashboard (vanilla JS, no build step)
+# ---------------------------------------------------------------------------
+
+_DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard-static"
+if _DASHBOARD_DIR.is_dir():
+    @app.get("/dashboard", include_in_schema=False)
+    def dashboard_redirect():
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url="/dashboard/")
+
+    app.mount("/dashboard", StaticFiles(directory=str(_DASHBOARD_DIR), html=True), name="dashboard")
+
+
 # Serve built React frontend if present (used in Docker image)
 # IMPORTANT: Mount static files LAST so API routes take precedence
 def resolveFrontendDist() -> Path | None:

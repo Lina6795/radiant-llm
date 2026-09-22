@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RADIANT-Control Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>RADIANT-Control <span class="muted">Operations Dashboard</span></h1>
+  <nav>
+    <a href="#home" data-tab="home">首页</a>
+    <a href="#runs" data-tab="runs">Runs</a>
+    <a href="#evidence" data-tab="evidence">Evidence</a>
+    <a href="#reviews" data-tab="reviews">Reviews <span id="review-badge" class="badge hidden"></span></a>
+    <a href="#benchmarks" data-tab="benchmarks">Benchmarks</a>
+  </nav>
+  <span id="health-pill" class="pill">…</span>
+</header>
+
+<main>
+  <section id="tab-home" class="tab">
+    <h2>系统状态</h2>
+    <div id="home-status" class="cards"></div>
+    <h2>快捷入口</h2>
+    <div class="cards">
+      <div class="card"><h3>创建 Run</h3><p>提交 goal，经 router→planner→guard→policy 后由 DurableRunner 执行。</p><a class="btn" href="#runs">前往 Runs</a></div>
+      <div class="card"><h3>人工审核</h3><p>高风险 / 外部工具的 run 会在 Review 队列等待决策。</p><a class="btn" href="#reviews">前往 Reviews</a></div>
+      <div class="card"><h3>证据检索</h3><p>检索与过滤 Evidence Store 中的证据记录。</p><a class="btn" href="#evidence">前往 Evidence</a></div>
+      <div class="card"><h3>回归基准</h3><p>触发 M8 评测并与基线对比。</p><a class="btn" href="#benchmarks">前往 Benchmarks</a></div>
+    </div>
+    <h2>摄取文档</h2>
+    <div class="panel">
+      <label>input_dir <input id="ingest-dir" placeholder="/path/to/kb-or-pdfs" size="44"></label>
+      <label>workspace <input id="ingest-ws" value="default" size="10"></label>
+      <label><input type="checkbox" id="ingest-parse" checked> 无 KB JSONL 时先解析 PDF</label>
+      <button id="ingest-btn">开始摄取</button>
+      <div id="ingest-result" class="log"></div>
+    </div>
+  </section>
+
+  <section id="tab-runs" class="tab hidden">
+    <h2>Runs</h2>
+    <div class="panel">
+      <input id="new-run-goal" placeholder="goal / query，例如：search evidence and export report" size="52">
+      <select id="new-run-ws"><option>default</option><option>readonly</option><option>lowbudget</option><option>full</option></select>
+      <button id="new-run-btn">创建 Run</button>
+      <span id="new-run-msg"></span>
+    </div>
+    <div class="split">
+      <div>
+        <table id="runs-table"><thead><tr><th>run_id</th><th>goal</th><th>state</th><th>workspace</th><th>updated</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div id="run-detail" class="detail hidden">
+        <h3 id="run-detail-title"></h3>
+        <div id="run-detail-meta"></div>
+        <div class="btnrow">
+          <button id="run-cancel-btn">Cancel</button>
+          <button id="run-resume-btn">Resume</button>
+          <button id="run-refresh-btn">刷新</button>
+        </div>
+        <h4>节点状态</h4>
+        <table id="run-steps"><thead><tr><th>step</th><th>tool</th><th>risk</th><th>state</th><th>attempt</th><th>error</th></tr></thead><tbody></tbody></table>
+        <h4>事件流</h4>
+        <div id="run-events" class="log events"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-evidence" class="tab hidden">
+    <h2>Evidence Inspector</h2>
+    <div class="panel">
+      <input id="ev-doc" placeholder="document_id" size="18">
+      <select id="ev-modality"><option value="">modality(全部)</option><option>text</option><option>visual</option><option>metadata</option></select>
+      <label><input type="checkbox" id="ev-degraded"> 含 degraded</label>
+      <button id="ev-search-btn">检索</button>
+      <button id="ev-docs-btn">文档列表</button>
+    </div>
+    <div class="split">
+      <div><table id="ev-table"><thead><tr><th>evidence_id</th><th>document</th><th>modality</th><th>page</th><th>degraded</th></tr></thead><tbody></tbody></table></div>
+      <div id="ev-detail" class="detail hidden"><h3>详情</h3><pre id="ev-detail-json"></pre></div>
+    </div>
+  </section>
+
+  <section id="tab-reviews" class="tab hidden">
+    <h2>Review 队列</h2>
+    <div class="panel">
+      reviewer_id <input id="reviewer-id" value="operator" size="12">
+      <button id="reviews-refresh">刷新</button>
+    </div>
+    <div id="reviews-list"></div>
+  </section>
+
+  <section id="tab-benchmarks" class="tab hidden">
+    <h2>Benchmarks</h2>
+    <div class="panel">
+      <span id="bm-layers"></span>
+      <button id="bm-run-btn">触发回归</button>
+      <button id="bm-refresh-btn">刷新列表</button>
+      <span id="bm-msg"></span>
+    </div>
+    <div class="split">
+      <div><table id="bm-table"><thead><tr><th>benchmark_id</th><th>status</th><th>created</th><th>cases</th></tr></thead><tbody></tbody></table></div>
+      <div id="bm-detail" class="detail hidden">
+        <h3 id="bm-detail-title"></h3>
+        <div id="bm-summary"></div>
+        <h4>指标 vs 基线</h4>
+        <table id="bm-metrics"><thead><tr><th>metric</th><th>baseline</th><th>current</th><th>delta</th></tr></thead><tbody></tbody></table>
+        <h4>失败 case</h4>
+        <div id="bm-failed"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="muted">RADIANT-Control M9 · 原生静态页 · 数据来自本机 FastAPI</footer>
+<script src="app.js"></script>
+</body>
+</html>
