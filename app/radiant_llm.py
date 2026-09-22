@@ -1292,29 +1292,16 @@ class Chatbot:
         # Initialize the alerts bucket 
         alerts = []
         supported_models = {
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.3-chat-latest",
-            "gpt-5.2",
-            "gpt-5.1",
-            "gpt-5",
-            "gpt-4.1",
-            "gpt-4o",
-            "gemini-3.1-pro-preview",
-            "gemini-3-pro-preview",
-            "gemini-2.5-flash",
+            # 本部署仅启用 DeepSeek（OpenAI 兼容端点）；gpt/gemini/grace 分支
+            # 代码保留为休眠状态，需要时把模型名加回本集合即可恢复。
             "deepseek-v4-pro",
             "deepseek-flash",
-            GRACE_MODEL_ID,
-            # "o1",
-            # "o3-mini",
-            # "o3",
         }
         if self.model_choice not in supported_models:
             return [
                 dbc.Alert(
                     f"Unsupported model '{self.model_choice}'. "
-                    "Please select a GPT, Gemini, or Grace model.",
+                    f"Available models: {', '.join(sorted(supported_models))}.",
                     color="danger",
                 )
             ]
