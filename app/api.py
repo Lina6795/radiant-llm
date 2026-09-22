@@ -3,6 +3,7 @@ import json
 import os
 import socket
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Any, List
 
@@ -63,6 +64,35 @@ def auto_initialize_model() -> None:
             print(f"[RADIANT-LLM] Auto-init failed for {model}: {exc}")
 
     threading.Thread(target=_init, name="auto-init-model", daemon=True).start()
+
+
+def _model_fully_ready() -> bool:
+    """convchain_api 的三重就绪条件（radiant_llm.py:2085）。"""
+    return bool(
+        getattr(cb, "llm_model", None)
+        and getattr(cb, "embedding_model", None)
+        and getattr(cb, "ai_assistant_agent", None)
+    )
+
+
+def wait_for_model_ready(timeout_s: float = 180.0, poll_s: float = 2.0) -> bool:
+    """Block until the chat stack is fully initialized (llm+embedding+agent).
+
+    Only waits when RADIANT_DEFAULT_MODEL is configured (auto-init may be in
+    progress in the background); otherwise returns immediately so callers get
+    the historical "No model initialized" error for a genuinely uninitialized
+    instance.
+    """
+    if _model_fully_ready():
+        return True
+    if not (os.getenv("RADIANT_DEFAULT_MODEL") or "").strip():
+        return False
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if _model_fully_ready():
+            return True
+        time.sleep(poll_s)
+    return _model_fully_ready()
 
 
 @app.get("/health", tags=["system"])
@@ -313,6 +343,12 @@ def query(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not query_text:
         raise HTTPException(status_code=400, detail="Field 'query' is required.")
 
+    if not wait_for_model_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="Model is still initializing or no model is configured. "
+            "Check RADIANT_DEFAULT_MODEL or POST /initialize.",
+        )
     result = cb.convchain_api(query_text)
     if "error" in result:
         appendStreamEventLog("query_error", result["error"])
@@ -455,6 +491,13 @@ async def stream_query(query: str):
     """
     if not query:
         raise HTTPException(status_code=400, detail="Query parameter 'query' is required.")
+
+    if not wait_for_model_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="Model is still initializing or no model is configured. "
+            "Check RADIANT_DEFAULT_MODEL or POST /initialize.",
+        )
 
     result_container: Dict[str, Any] = {}
 
