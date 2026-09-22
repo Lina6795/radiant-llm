@@ -28,7 +28,7 @@ set +a
 
 export LD_LIBRARY_PATH="$BASE/runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$BASE/runtime/bin:$PATH"
-export RADIANT_LLM_SKILLS_DIR="${RADIANT_LLM_SKILLS_DIR:-$BASE/radiant_llm_skills}"
+export RADIANT_LLM_SKILLS_DIR="${RADIANT_LLM_SKILLS_DIR:-$APP/radiant_llm_skills}"
 export RADIANT_LLM_SESSION_DIR="${RADIANT_LLM_SESSION_DIR:-$BASE/Docker_Executable/RADIANT_LLM_Sessions}"
 export RADIANT_LLM_PORT="${RADIANT_LLM_PORT:-8080}"
 export PYTHONUNBUFFERED=1
