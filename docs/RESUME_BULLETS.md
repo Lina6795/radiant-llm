@@ -16,7 +16,7 @@
 - **证据与检索治理**：构建 BM25 + Dense → RRF → Authority Gate 混合检索，在 16 条冻结用例上将 Recall@5 从 **0.234 提升至 0.299**、锚点命中@5 从 0.929 提至 1.000、证据冲突判定从 3 例降至 0 例，逐用例 paired diff 无退化；实测砍掉无收益的 proxy rerank 阶段。上下文侧以 tiktoken 分项预算 + 证据 pin 替换 chars//4 粗估，1–100 源压力梯度下关键证据保留率 **1.0**（无 pin 基线 0.4，100 源时跌到 0.0）。
   证据：`artifacts/retrieval/m4-20260922/metrics.json`、`paired_diff.json`；`artifacts/context/m5-20260922/metrics.json`
 
-- **治理与评测**：实现 Memory 写入门控（注入/秘密/无溯源 11 类机器可读拒绝）与 workspace 隔离——write precision 1.0、过期命中 0、冲突检出 1.0、**跨 workspace 泄漏 0**；实现 claim-evidence 核验与人工 Review 队列，提交答案的 unsupported rate 从 0.425 降至 **0.000***（*口径：B3 仅统计实际提交的 6/12 答案，收益来自拦截弃答而非修复生成，fact_recall 同步下降，如实声明）。建成六层 **116 用例单命令回归**与 fail-closed release gate（111 pass / 1 fail 如实记红 / 4 skip）。
+- **治理与评测**：实现 Memory 写入门控（注入/秘密/无溯源 11 类机器可读拒绝）与 workspace 隔离——write precision 1.0、过期命中 0、冲突检出 1.0、**跨 workspace 泄漏 0**（口径：workspace 逻辑隔离，非用户身份认证）；写入路径为显式 API + 回答 accept 后自动写 session 摘要/证据指针（user_fact/decision 需人工确认）。实现 claim-evidence 核验与人工 Review 队列，提交答案的 unsupported rate 从 0.425 降至 **0.000***（*口径：B3 仅统计实际提交的 6/12 答案，收益来自拦截弃答而非修复生成，fact_recall 同步下降，如实声明）。建成六层 **116 用例单命令回归**与 fail-closed release gate（111 pass / 1 fail 如实记红 / 4 skip）；S10 起 E2E 层判定 accept/review 分列，review 不计 pass。
   证据：`tests/memory/test_metrics.py`；`artifacts/verification/m7-20260922/summary.json`；`artifacts/eval/m8-baseline-20260922/report.json`
 
 - **交付与实测对照**：FastAPI + SSE + 静态运维 Dashboard，`./start_radiant.sh -d` 一键启动，在无特权云容器（6 核 CPU / 30G / 无 GPU）原生运行；备份/恢复脚本覆盖全部 SQLite 与 artifacts。完成 Nougat vs PyMuPDF 降级路径视觉对照实测：公式保留 33 chunk vs 0、图描述 8 vs 7（含 1 例真实 VLM 输出解析失败，未修复如实记录），论证证据身份必须携带 parser 指纹。
