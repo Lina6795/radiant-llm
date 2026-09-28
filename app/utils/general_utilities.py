@@ -1,4 +1,4 @@
-# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents. 
+# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents.
 import os
 import matplotlib.pyplot as plt
 from difflib import get_close_matches
@@ -22,7 +22,7 @@ import socket
 import webbrowser
 import subprocess
 import datetime as _dt
-import shlex    # For SAM execution 
+import shlex    # For SAM execution
 from tqdm import tqdm  # For SAM execution on cluster
 from langchain_experimental.utilities import PythonREPL
 from langchain_core.prompts import ChatPromptTemplate
@@ -31,7 +31,7 @@ from langchain_core.tools import tool
 from langchain.agents import create_tool_calling_agent, create_openai_tools_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
 
-# Memory capabilities 
+# Memory capabilities
 from langchain.prompts import MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
 from langchain.agents import initialize_agent
@@ -72,7 +72,7 @@ import re
 import time
 import pytesseract
 
-# Dash Components 
+# Dash Components
 import dash
 from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -80,7 +80,7 @@ import dash_bootstrap_components as dbc
 # WorkSataion Execution
 import paramiko
 
-# Custom Utilities 
+# Custom Utilities
 # *************** More for ERROR RESOLUTION PIPELINE ***************
 import difflib
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -93,7 +93,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module='pydantic')
 # Global variable for external alerts
 # -------------------------------
 # global_external_alerts = []  # This list will be updated by your core functions outside callbacks
-# global cb # This is the Chatbot class defined as a global variable 
+# global cb # This is the Chatbot class defined as a global variable
 
 
 
@@ -134,7 +134,7 @@ def free_port_finder():
 # Prompt Finetuning  Logic (with ReAct format)
 #=============================================================================
 from langchain_core.tools import BaseTool
-def PromptFinetuning(query: str, 
+def PromptFinetuning(query: str,
                      tool_names: Optional[Sequence[str]] = None) -> str:
     """
     Wraps the user's query with system instructions:
@@ -174,7 +174,7 @@ def PromptFinetuning(query: str,
         "...(Thought/Action/Action Input/Observation can repeat N times as needed)...\n"
         "Thought: I now know the final answer\n"
         "Final Answer: the answer to the original question\n"
-    
+
         "Begin!\n\n"
         f"Question: {query}\n"
         "Thought:"
@@ -229,7 +229,7 @@ def convert_to_unix(file_path: Path):
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 # =====================================================================
-#                       Global Alerts for the Chat bot 
+#                       Global Alerts for the Chat bot
 # =====================================================================
 def GeneralAlerts(alert_sink, message, color="info", dismissable=True):
     """
@@ -545,8 +545,8 @@ from cgi import parse_header
 
 def get_osti_pdf_link(osti_id: str) -> str | None:
     """
-    Query the OSTI API for the record JSON. 
-    First try to find a direct .pdf URL; 
+    Query the OSTI API for the record JSON.
+    First try to find a direct .pdf URL;
     otherwise fall back to the 'fulltext' link.
     Returns None if any network or API error occurs.
     """
@@ -586,8 +586,8 @@ def file_downloader(
     #-------------------------------------------
     def get_osti_pdf_link(osti_id: str) -> str | None:
         """
-        Query the OSTI API for the record JSON. 
-        First try to find a direct .pdf URL; 
+        Query the OSTI API for the record JSON.
+        First try to find a direct .pdf URL;
         otherwise fall back to the 'fulltext' link.
         Returns None if any network or API error occurs.
         """
@@ -685,7 +685,7 @@ def call_vision_llm(
     detail: str = "auto"
 ) -> str:
     """
-    Given a list of PNG‐bytes and a text prompt, call the *right* vision LLM 
+    Given a list of PNG‐bytes and a text prompt, call the *right* vision LLM
     based on cb.llm_type (“gemini” or “gpt”) and return its raw text response.
     """
     # === GEMINI branch ===
@@ -855,9 +855,26 @@ def LLMReasoningChainLogger(model_name: str) -> logging.Logger:
 def appendStreamEventLog(event_type: str, payload: str) -> None:
     """
     Persist stream/query events for offline debugging/traceability.
+    Size-based rotation (S9-5): at 10MB the log rotates to
+    streaming_events.log.1, keeping at most 3 generations.
     """
     try:
         log_file = LOG_DIR / "streaming_events.log"
+        _MAX_BYTES = 10 * 1024 * 1024
+        _KEEP = 3
+        try:
+            if log_file.stat().st_size > _MAX_BYTES:
+                for gen in range(_KEEP - 1, 0, -1):
+                    older = LOG_DIR / f"streaming_events.log.{gen}"
+                    newer = LOG_DIR / f"streaming_events.log.{gen + 1}"
+                    if older.exists():
+                        if gen + 1 > _KEEP:
+                            older.unlink()
+                        else:
+                            older.replace(newer)
+                log_file.replace(LOG_DIR / "streaming_events.log.1")
+        except FileNotFoundError:
+            pass
         stamp = _dt.datetime.utcnow().isoformat()
         with log_file.open("a", encoding="utf-8") as f:
             f.write(f"{stamp}\t{event_type}\t{payload}\n")
@@ -890,8 +907,8 @@ class ReasoningLoggerCallback(BaseCallbackHandler):
         appendStreamEventLog("reasoning_event", text)
 
     def on_llm_start(self, serialized, prompts, **kwargs):
-        # Ensure a blank line 
-        # self.logger.info("") 
+        # Ensure a blank line
+        # self.logger.info("")
         try:
             msg = f"[LLM_START] prompts={prompts}"
             self.logger.info(msg)
@@ -900,7 +917,7 @@ class ReasoningLoggerCallback(BaseCallbackHandler):
             self.logger.error(f"[LLM_START logging failed] {e}")
 
     def on_llm_end(self, response: LLMResult, **kwargs):
-        # Ensure a blank line 
+        # Ensure a blank line
         # self.logger.info("")
         try:
             msg = f"[LLM_END] {response.llm_output or ''}"
@@ -920,7 +937,7 @@ class ReasoningLoggerCallback(BaseCallbackHandler):
 
     def on_agent_finish(self, finish: AgentFinish, **kwargs):
          # Blank line + big separator + final message
-        self.logger.info("") 
+        self.logger.info("")
         try:
             msg = f"[AGENT_FINISH] {finish.log}"
             self.logger.info(msg)
@@ -935,7 +952,7 @@ class ReasoningLoggerCallback(BaseCallbackHandler):
 
 # =====================================================================
 # =====================================================================
-#                       YAML File reader 
+#                       YAML File reader
 # =====================================================================
 import yaml
 from pathlib import Path
@@ -994,7 +1011,7 @@ def yaml_reader(path: Path, flatten: bool = True) -> Tuple[Union[Any, None], Uni
 
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-            
+
         if data is None:
             data = {}
 
@@ -1014,7 +1031,7 @@ def yaml_reader(path: Path, flatten: bool = True) -> Tuple[Union[Any, None], Uni
     except Exception as e:
         error_message = f"An unexpected error occurred while reading the file '{path}': {e}\n\nTraceback:\n{traceback.format_exc()}"
         return (None, error_message)
-    
+
 
 # #*********************** Try it ***********************
 # # Path to your YAML file

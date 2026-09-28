@@ -123,6 +123,7 @@ class DenseRetriever:
                 document_id=ev.get("document_id", doc.metadata.get("document_id")),
                 chunk_id=span.get("chunk_id", doc.metadata.get("chunk_id")),
                 authority_level=ev.get("authority_level"),
+                modality=ev.get("modality", "text"),
                 source_ranks={"dense": {"rank": rank, "score": sim}},
             ))
         return out

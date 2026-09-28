@@ -266,6 +266,7 @@ class EvidenceStore:
         modality: Optional[str] = None,
         degraded: Optional[bool] = None,
         include_degraded: bool = False,
+        current_only: bool = False,
         limit: int = DEFAULT_LIMIT,
         offset: int = 0,
     ) -> Dict[str, Any]:
@@ -273,7 +274,9 @@ class EvidenceStore:
         List evidence. Degraded records are excluded by default; pass
         ``include_degraded=True`` (or an explicit ``degraded`` filter) to
         see them — degraded evidence is never an authoritative-answer
-        candidate unless explicitly requested.
+        candidate unless explicitly requested. ``current_only=True`` keeps
+        only rows whose validity column is open (valid_to IS NULL) --
+        the column, not the payload JSON, is authoritative (D1/D8).
         """
         clauses: List[str] = []
         params: List[Any] = []
@@ -291,6 +294,8 @@ class EvidenceStore:
             params.append(int(degraded))
         elif not include_degraded:
             clauses.append("degraded = 0")
+        if current_only:
+            clauses.append("valid_to IS NULL")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         total = self._conn.execute(
             f"SELECT COUNT(*) AS n FROM evidence {where}", params
@@ -309,11 +314,46 @@ class EvidenceStore:
             "items": [self._row_payload(r) for r in rows],
         }
 
+    def current_evidence_by_chunk(
+        self, workspace_id: str, document_id: Optional[str] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """chunk_id -> payload of the CURRENTLY VALID evidence row.
+
+        Single source of truth for chunk/Evidence-ID mapping (S3-2): the
+        validity is read from the column, not the stale payload JSON (D1/D8),
+        and superseded rows can never shadow current ones.
+        """
+        clauses = ["workspace_id = ?", "valid_to IS NULL"]
+        params: List[Any] = [workspace_id]
+        if document_id is not None:
+            clauses.append("document_id = ?")
+            params.append(document_id)
+        where = " AND ".join(clauses)
+        rows = self._conn.execute(
+            f"SELECT payload FROM evidence WHERE {where}"
+            " ORDER BY document_id, page, evidence_id",
+            params,
+        ).fetchall()
+        by_chunk: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            item = json.loads(row["payload"])
+            chunk_id = (item.get("source_span") or {}).get("chunk_id")
+            if chunk_id:
+                by_chunk[chunk_id] = item
+        return by_chunk
+
     def get_evidence(self, evidence_id: str) -> Optional[Dict[str, Any]]:
+        # Column values are authoritative for validity windows: supersede
+        # updates the columns but not the stored payload JSON.
         row = self._conn.execute(
-            "SELECT payload FROM evidence WHERE evidence_id = ?", (evidence_id,)
+            "SELECT payload, valid_from, valid_to FROM evidence WHERE evidence_id = ?", (evidence_id,)
         ).fetchone()
-        return self._row_payload(row) if row else None
+        if row is None:
+            return None
+        payload = self._row_payload(row)
+        payload["valid_from"] = row["valid_from"]
+        payload["valid_to"] = row["valid_to"]
+        return payload
 
     def list_documents(
         self,

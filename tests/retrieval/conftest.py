@@ -11,8 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "app"))
 BASELINE_DIR = Path(
     os.getenv("RADIANT_BASELINE_DIR",
               "/mnt/lina/radiant-llm/artifacts/baseline/m0-20260922"))
+# NOTE: RADIANT_EVIDENCE_DB is the *runtime store* env var (tests/api sets it
+# to a session-tmp DB); reusing it here silently retargets this smoke test at
+# the wrong database (masked before by the skip below). Use a baseline-specific
+# override instead.
 BASELINE_EVIDENCE_DB = Path(
-    os.getenv("RADIANT_EVIDENCE_DB", str(BASELINE_DIR / "evidence.db")))
+    os.getenv("RADIANT_BASELINE_EVIDENCE_DB", str(BASELINE_DIR / "evidence.db")))
 BASELINE_VECTOR_STORE = Path(
     os.getenv("RADIANT_VECTOR_STORE",
               str(BASELINE_DIR / "output" / "local_vector_store")))

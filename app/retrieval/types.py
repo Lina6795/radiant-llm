@@ -33,6 +33,7 @@ class Candidate:
     document_id: Optional[str] = None
     chunk_id: Optional[str] = None
     authority_level: Optional[str] = None
+    modality: str = "text"
     # Per-source provenance filled in by fusion: {source: {"rank","score"}}.
     source_ranks: Dict[str, Dict[str, float]] = field(default_factory=dict)
     # Filter / gate bookkeeping: reason strings, in application order.
@@ -51,6 +52,7 @@ class Candidate:
             "document_id": self.document_id,
             "chunk_id": self.chunk_id,
             "authority_level": self.authority_level,
+            "modality": self.modality,
             "source_ranks": self.source_ranks,
             "kept": self.kept,
             "filter_reasons": list(self.filter_reasons),

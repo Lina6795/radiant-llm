@@ -83,6 +83,7 @@ def rrf_fuse(lists: Dict[str, List[Candidate]],
                     document_id=cand.document_id,
                     chunk_id=cand.chunk_id,
                     authority_level=cand.authority_level,
+                    modality=cand.modality,
                 )
                 fused[cand.evidence_id] = entry
             entry.score += 1.0 / (k + cand.rank)
@@ -93,6 +94,8 @@ def rrf_fuse(lists: Dict[str, List[Candidate]],
                 entry.page = cand.page
             if entry.authority_level is None:
                 entry.authority_level = cand.authority_level
+            if entry.modality == "text" and cand.modality != "text":
+                entry.modality = cand.modality
 
     def sort_key(c: Candidate):
         best_src_rank = min((r["rank"] for r in c.source_ranks.values()),

@@ -32,7 +32,12 @@ def test_real_corpus_smoke():
     assert hits and hits[0].score > 0
 
     by_chunk, _ = build_chunk_to_evidence_map(items)
-    assert len(by_chunk) == len(items)
+    # Versioned evidence (supersede appends new rows per chunk, see D1/D2) means
+    # several items can share one chunk_id: the map is keyed by chunk, so it
+    # must cover exactly the distinct chunk ids, not the raw item count.
+    unique_chunks = {(it.get("source_span") or {}).get("chunk_id") for it in items}
+    unique_chunks.discard(None)
+    assert len(by_chunk) == len(unique_chunks)
 
     # vector store directory exists with a chroma sqlite inside
     assert (BASELINE_VECTOR_STORE / "chroma.sqlite3").exists()
