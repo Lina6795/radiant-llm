@@ -22,11 +22,25 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from pathlib import Path
 from typing import Callable, Optional
 
 from app.memory.models import MemoryRecord, RecordStatus
 
 DB_PATH_ENV = "RADIANT_MEMORY_DB"
+
+
+def default_db_path() -> str:
+    """RADIANT_MEMORY_DB > RADIANT_LLM_CONFIG_DIR/memory.db > repo-root memory.db.
+    Single resolution point so the API runtime and context.assemble always
+    open the SAME memory store."""
+    override = os.environ.get(DB_PATH_ENV)
+    if override:
+        return override
+    config_dir = os.environ.get("RADIANT_LLM_CONFIG_DIR")
+    if config_dir:
+        return str(Path(config_dir) / "memory.db")
+    return str(Path(__file__).resolve().parents[2] / "memory.db")
 
 
 class MemoryStoreError(Exception):
