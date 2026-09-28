@@ -244,6 +244,8 @@ class ContextEngine:
         for it in selection.selected:
             pin = " [PINNED]" if it.pinned else ""
             loc = f"page {it.page}" if it.page is not None else "page ?"
+            if it.modality and it.modality != "text":
+                loc = f"{loc}, {it.modality}"
             ev_lines.append(f"({it.evidence_id}, {loc}){pin}\n{it.content}")
         if ev_lines:
             sections.append("[EVIDENCE]\n" + "\n\n".join(ev_lines))

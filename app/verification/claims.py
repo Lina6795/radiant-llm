@@ -48,8 +48,9 @@ class SplitResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+|[；;]\s*")
+_CITATION_MARKER_RE = re.compile(r"\[(?:ev|mem|doc)[-:][^\]]+\]", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
-_ENTITY_RE = re.compile(r"\b(?:[A-Z][a-zA-Z]+(?:[- ][A-Za-z]+)*|[a-z]+_[a-z]+)\b")
+_ENTITY_RE = re.compile(r"\b(?:[A-Z][a-zA-Z]+(?:[- ][A-Z][A-Za-z]+){0,2}|[a-z]+_[a-z]+)\b")
 
 # Units observed in the frozen corpus plus common ML units. Matching is
 # case-sensitive for symbols (ms, GB) and case-insensitive for words.
@@ -134,9 +135,19 @@ def classify_claim(sentence: str, numbers: list[str], units: list[str]) -> Claim
 
 
 def split_sentences(answer: str) -> list[str]:
+    # Mask bracketed citation spans before splitting: a compound citation
+    # like "[ev-a, page 2; ev-b, page 1]" contains '; ' and must not be cut
+    # mid-bracket (fragments leak citation digits into number extraction).
+    masked: list[str] = []
+    def _mask(m):
+        masked.append(m.group(0))
+        return f"\x00{len(masked) - 1}\x00"
+
+    work = re.sub(r"\[[^\]]*\]", _mask, answer or "")
     parts = []
-    for raw in _SENTENCE_SPLIT_RE.split(answer or ""):
-        s = raw.strip().lstrip("-*•0123456789.) ").strip()
+    for raw in _SENTENCE_SPLIT_RE.split(work):
+        restored = re.sub(r"\x00(\d+)\x00", lambda m: masked[int(m.group(1))], raw)
+        s = restored.strip().lstrip("-*•0123456789.) ").strip()
         if len(s) >= 3:
             parts.append(s)
     return parts
@@ -149,17 +160,21 @@ def split_sentences(answer: str) -> list[str]:
 def _rule_split(answer: str) -> list[Claim]:
     claims: list[Claim] = []
     for idx, sentence in enumerate(split_sentences(answer)):
-        numbers = extract_numbers(sentence)
-        units = extract_units(sentence)
+        # Strip citation markers like [ev-1467...] before numeric analysis:
+        # the digits inside an evidence citation are NOT claim content and
+        # would otherwise misclassify every cited claim as NUMERIC.
+        analysis_text = _CITATION_MARKER_RE.sub("", sentence)
+        numbers = extract_numbers(analysis_text)
+        units = extract_units(analysis_text)
         claims.append(
             Claim(
                 claim_id=make_claim_id(sentence),
                 text=sentence,
-                claim_type=classify_claim(sentence, numbers, units),
+                claim_type=classify_claim(analysis_text, numbers, units),
                 sentence_index=idx,
                 numbers=numbers,
                 units=units,
-                entities=extract_entities(sentence),
+                entities=extract_entities(analysis_text),
             )
         )
     return claims

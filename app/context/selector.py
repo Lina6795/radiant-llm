@@ -50,6 +50,8 @@ class EvidenceItem:
     pinned: bool = False
     document_id: Optional[str] = None
     chunk_id: Optional[str] = None
+    modality: str = "text"
+    neighbor_of: Optional[str] = None  # admitted as neighbor of this anchor item
 
     def tokens(self, counter: Optional[TokenCounter] = None) -> int:
         return (counter or default_counter()).count(self.content)
