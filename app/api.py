@@ -343,6 +343,33 @@ def query(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not query_text:
         raise HTTPException(status_code=400, detail="Field 'query' is required.")
 
+    # S9-1: knowledge QA defaults to the control chain; the legacy convchain
+    # is reachable ONLY via an explicit switch (body legacy=true or
+    # RADIANT_LEGACY_CHAT=1). Non-tool intents (plain chat) stay on the legacy
+    # chain WITH the router decision disclosed -- routing, not fallback.
+    legacy = bool(payload.get("legacy")) or os.getenv("RADIANT_LEGACY_CHAT") == "1"
+    if not legacy:
+        rt = get_run_runtime()
+        try:
+            decision = rt.router(query_text)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"router_error:{type(exc).__name__}")
+        if decision.action == _Action.TOOL_CALL:
+            return _run_control_chain_sync(rt, query_text, decision)
+        if not wait_for_model_ready():
+            raise HTTPException(
+                status_code=503,
+                detail="Model is still initializing or no model is configured. "
+                "Check RADIANT_DEFAULT_MODEL or POST /initialize.",
+            )
+        result = cb.convchain_api(query_text)
+        if "error" in result:
+            appendStreamEventLog("query_error", result["error"])
+            raise HTTPException(status_code=400, detail=result["error"])
+        result["chain"] = "legacy"
+        result["router"] = {"action": decision.action.value, "reason_codes": list(decision.reason_codes)}
+        return result
+
     if not wait_for_model_ready():
         raise HTTPException(
             status_code=503,
@@ -354,8 +381,57 @@ def query(payload: Dict[str, Any]) -> Dict[str, Any]:
         appendStreamEventLog("query_error", result["error"])
         raise HTTPException(status_code=400, detail=result["error"])
     appendStreamEventLog("query_final", f"query={query_text[:120]} result_len={len(result.get('response', '') or '')}")
-
+    result["chain"] = "legacy"
     return result
+
+
+def _run_control_chain_sync(rt: "RunRuntime", query_text: str, decision) -> Dict[str, Any]:
+    """S9-1: run the same control chain as POST /runs, synchronously, and
+    return the verified answer. Failures surface as typed errors -- the old
+    convchain is NEVER consulted from this path (S9-2)."""
+    try:
+        raw_plan = rt.planner(decision, query_text)
+        plan = raw_plan if isinstance(raw_plan, _ExecutionPlan) else _ExecutionPlan.model_validate(raw_plan)
+    except Exception:
+        raise HTTPException(status_code=422, detail={"code": "planner.invalid_output", "reason_codes": []})
+    guard = rt.guard.validate(plan)
+    if not guard.ok:
+        raise HTTPException(status_code=422, detail={"code": "plan_rejected", "reason_codes": list(guard.reason_codes)})
+    policy = rt.policy.authorize(plan, "default")
+    if policy.verdict == _PolicyVerdict.DENY:
+        raise HTTPException(status_code=403, detail={"code": "policy_denied", "reason_codes": list(policy.reason_codes)})
+
+    run_id = str(plan.run_id)
+    with rt.lock:
+        rt.plans[run_id] = plan
+        rt.workspaces[run_id] = "default"
+    report = rt.runner.run(plan, workspace="default")
+    verify = (report.results or {}).get("s5-verify")
+    output = (verify.output or {}) if verify else {}
+    failing = {sid: (r.error.code if r.error else "")
+               for sid, r in (report.results or {}).items() if r.status.value != "success"}
+    if report.status.value != "succeeded":
+        return {
+            "chain": "control",
+            "run_id": run_id,
+            "verify_action": None,
+            "claims": [],
+            "error": {"code": (report.reason or "run_failed"), "failing_steps": failing or None},
+        }
+    action = output.get("verify_action")
+    claims = output.get("claims") or []
+    _maybe_write_memory(rt, plan, "default", report)
+    return {
+        "chain": "control",
+        "run_id": run_id,
+        "response": output.get("answer") or "",
+        "verify_action": action,
+        "claims": claims,
+        "citations": sorted({e for c in claims for e in (c.get("evidence_ids") or [])}),
+        "router_reason_codes": list(decision.reason_codes),
+        "revise_used": output.get("revise_used"),
+        "error": None if action in ("accept", "review") else {"code": f"verify.{action}"},
+    }
 
 
 @app.get("/alerts", tags=["chat"])
@@ -639,6 +715,43 @@ from datetime import datetime as _datetime, timezone as _timezone
 
 from fastapi import Header as _Header, Response as _Response
 
+
+@app.get("/health/ready", tags=["system"])
+def readiness_check(response: _Response) -> Dict[str, Any]:
+    """S9-5: readiness = every runtime dependency the control chain needs.
+    /health stays pure liveness; this one reports per-component status and
+    returns 503 when any required component is unavailable."""
+    checks: Dict[str, Any] = {}
+
+    kb_dir = (os.getenv("RADIANT_EVIDENCE_KB_DIR") or "").strip()
+    checks["kb_dir"] = {"ok": bool(kb_dir) and Path(kb_dir).is_dir(), "configured": bool(kb_dir)}
+
+    try:
+        from app.evidence.store import get_evidence_store as _ges
+
+        store = _ges()
+        store.close()
+        checks["evidence_db"] = {"ok": True}
+    except Exception as exc:
+        checks["evidence_db"] = {"ok": False, "error": f"{type(exc).__name__}"}
+
+    try:
+        rt = get_run_runtime()
+        checks["durable_db"] = {"ok": os.path.exists(rt.db_path)}
+    except Exception as exc:
+        checks["durable_db"] = {"ok": False, "error": f"{type(exc).__name__}"}
+
+    vs_dir = (os.getenv("RADIANT_VECTOR_STORE") or "").strip()
+    checks["vector_store"] = {"ok": bool(vs_dir) and Path(vs_dir).is_dir(), "configured": bool(vs_dir)}
+
+    model = (os.getenv("RADIANT_DEFAULT_MODEL") or "").strip()
+    checks["model"] = {"ok": bool(model), "configured": model or None}
+
+    ready = all(c.get("ok") for c in checks.values())
+    if not ready:
+        response.status_code = 503
+    return {"status": "ready" if ready else "not_ready", "checks": checks}
+
 _M9_REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_M9_REPO_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_M9_REPO_ROOT))
@@ -694,7 +807,7 @@ class RunRuntime:
         self.events = _EventStore(db)
         self.leases = _LeaseManager(db)
         self.ledger = _PersistentLedger(db)
-        self.registry = _build_default_registry()
+        self.registry = _build_default_registry(evidence="real")
         budget_ledger = _BudgetLedger.with_defaults(["default", "readonly", "lowbudget", "full"])
         self.policy = _PolicyEngine(registry=self.registry, ledger=budget_ledger)
         self.guard = _SchemaGuard(registry=self.registry)
@@ -724,7 +837,18 @@ class RunRuntime:
         if run_id is not None and (run_id, step.step_id) in self.cleared_steps:
             return False
         spec = self.registry.get(step.tool)
-        return step.risk == _Risk.EXTERNAL or bool(spec and spec.high_risk)
+        if step.risk == _Risk.EXTERNAL or bool(spec and spec.high_risk):
+            return True
+        # S6: high-risk answer verification pauses BEFORE verify executes --
+        # any draft carrying numeric/unit claims gets human sign-off.
+        if step.tool == "answer.verify" and run_id is not None:
+            try:
+                draft_cp = self.checkpoints.load_checkpoints(run_id).get("s4-draft")
+                claims = ((draft_cp.output or {}).get("claims") or []) if draft_cp else []
+                return any(c.get("claim_type") in ("numeric", "unit") for c in claims)
+            except Exception:
+                return True  # fail closed: uninspectable draft -> human review
+        return False
 
 
 _RUN_RUNTIME: _Optional[RunRuntime] = None
@@ -739,6 +863,153 @@ def get_run_runtime() -> RunRuntime:
                 _RUN_RUNTIME = RunRuntime()
     return _RUN_RUNTIME
 
+
+# ---------------------------------------------------------------------------
+# S5: governed memory over the real API (M6 library, production wiring)
+# ---------------------------------------------------------------------------
+
+from app.memory.models import MemoryCandidate as _MemoryCandidate, MemoryRecord as _MemoryRecord, Provenance as _Provenance
+from app.memory.read_gate import ReadGate as _ReadGate, ReadQuery as _ReadQuery
+from app.memory.store import MemoryStore as _MemoryStore
+from app.memory.write_gate import WriteGate as _WriteGate, attempt_write as _attempt_write
+
+
+class MemoryRuntime:
+    """Process-wide governed-memory runtime: one store over a durable SQLite
+    file, the Write Gate (default deny) and the Read Gate (workspace/namespace
+    /TTL filtered recall)."""
+
+    def __init__(self) -> None:
+        from app.memory.store import default_db_path as _default_memory_db
+
+        self.db_path = _default_memory_db()
+        self.store = _MemoryStore(self.db_path)
+        self.write_gate = _WriteGate()
+        self.read_gate = _ReadGate()
+
+
+_MEMORY_RUNTIME: _Optional[MemoryRuntime] = None
+_MEMORY_RUNTIME_LOCK = threading.Lock()
+
+
+def get_memory_runtime() -> MemoryRuntime:
+    global _MEMORY_RUNTIME
+    if _MEMORY_RUNTIME is None:
+        with _MEMORY_RUNTIME_LOCK:
+            if _MEMORY_RUNTIME is None:
+                _MEMORY_RUNTIME = MemoryRuntime()
+    return _MEMORY_RUNTIME
+
+
+def _memory_record_payload(record) -> Dict[str, Any]:
+    return {
+        "memory_id": record.memory_id,
+        "category": record.category.value,
+        "subject": record.subject,
+        "value": record.value,
+        "namespace": record.namespace,
+        "workspace": record.workspace,
+        "confidence": record.confidence,
+        "status": record.status.value,
+        "created_at": record.created_at,
+        "ttl_seconds": record.ttl_seconds,
+        "provenance": record.provenance.model_dump(),
+    }
+
+
+@app.post("/memories", tags=["memory"])
+def write_memory(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Propose a memory write. The Write Gate is default-deny: only
+    well-sourced, confirmed, non-conflicting candidates are persisted."""
+    rt = get_memory_runtime()
+    try:
+        provenance = _Provenance(**(payload.get("provenance") or {}))
+        candidate = _MemoryCandidate(
+            category=payload.get("category", "user_fact"),
+            subject=payload.get("subject", ""),
+            value=payload.get("value", ""),
+            namespace=payload.get("namespace", "default"),
+            workspace=payload.get("workspace", "default"),
+            provenance=provenance,
+            write_reason=payload.get("write_reason", ""),
+            confidence=float(payload.get("confidence", 0.5)),
+            sensitivity=payload.get("sensitivity", "internal"),
+            ttl_seconds=payload.get("ttl_seconds"),
+            user_confirmed=bool(payload.get("user_confirmed", False)),
+            user_confirmation_id=payload.get("user_confirmation_id"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid memory candidate: {exc}")
+    decision = _attempt_write(rt.store, rt.write_gate, candidate)
+    return {
+        "outcome": decision.outcome.value,
+        "reasons": decision.reasons,
+        "conflicting_with": decision.conflicting_with,
+        "memory_id": decision.record.memory_id if decision.record else None,
+    }
+
+
+@app.get("/memories", tags=["memory"])
+def recall_memories(
+    q: str = _Query(""), workspace: str = _Query("default"),
+    namespace: _Optional[str] = None, category: _Optional[str] = None,
+    top_k: int = _Query(20, ge=1, le=100),
+) -> Dict[str, Any]:
+    rt = get_memory_runtime()
+    records = rt.read_gate.recall(
+        rt.store,
+        _ReadQuery(workspace=workspace, text=q, namespace=namespace, category=category, top_k=top_k),
+    )
+    return {"records": [_memory_record_payload(r) for r in records]}
+
+
+@app.post("/memories/{memory_id}/supersede", tags=["memory"])
+def supersede_memory(memory_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Explicit supersede: the new confirmed value is written and the old
+    record is closed (audited). Never a silent overwrite."""
+    rt = get_memory_runtime()
+    try:
+        old = rt.store.get(memory_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"memory '{memory_id}' not found")
+    try:
+        candidate = _MemoryCandidate(
+            category=payload.get("category", old.category.value),
+            subject=payload.get("subject", old.subject),
+            value=payload.get("value", ""),
+            namespace=payload.get("namespace", old.namespace),
+            workspace=payload.get("workspace", old.workspace),
+            provenance=_Provenance(**(payload.get("provenance") or {})),
+            write_reason=payload.get("write_reason", ""),
+            confidence=float(payload.get("confidence", 0.5)),
+            sensitivity=payload.get("sensitivity", old.sensitivity.value),
+            user_confirmed=bool(payload.get("user_confirmed", False)),
+            user_confirmation_id=payload.get("user_confirmation_id"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid memory candidate: {exc}")
+    decision = rt.write_gate.evaluate(candidate, store=rt.store, skip_conflict=True)
+    if not decision.allowed:
+        return {"outcome": decision.outcome.value, "reasons": decision.reasons, "memory_id": None}
+    record = rt.store.put(_MemoryRecord.from_candidate(candidate))
+    rt.store.mark_superseded(memory_id, record.memory_id, reason=payload.get("write_reason", "supersede"))
+    return {"outcome": "allow", "reasons": [], "memory_id": record.memory_id, "superseded": memory_id}
+
+
+@app.delete("/memories/{memory_id}", tags=["memory"])
+def delete_memory(memory_id: str, reason: str = _Query(...), actor: str = _Query("user")) -> Dict[str, Any]:
+    rt = get_memory_runtime()
+    try:
+        rt.store.delete(memory_id, reason=reason, actor=actor)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"memory '{memory_id}' not found")
+    return {"memory_id": memory_id, "status": "deleted", "reason": reason}
+
+
+@app.get("/memories/{memory_id}/audit", tags=["memory"])
+def memory_audit(memory_id: str) -> Dict[str, Any]:
+    rt = get_memory_runtime()
+    return {"memory_id": memory_id, "events": rt.store.audit_trail(memory_id)}
 
 def _review_risk_reasons(rt: RunRuntime, plan: _ExecutionPlan, step_states: Dict[str, Any]) -> List[str]:
     reasons: List[str] = []
@@ -764,19 +1035,75 @@ def _maybe_enqueue_review(rt: RunRuntime, plan: _ExecutionPlan, workspace: str, 
     if status != _RunState.WAITING_REVIEW:
         return
     run_id = str(plan.run_id)
+    # S6: carry the REAL disputed content -- claims from the draft step and
+    # the evidence snapshot from the inspect step -- never an empty payload.
+    claims: List[Dict[str, Any]] = []
+    evidence_snapshot: List[Dict[str, Any]] = []
+    try:
+        cps = rt.checkpoints.load_checkpoints(run_id)
+        draft_cp = cps.get("s4-draft")
+        if draft_cp and draft_cp.output:
+            claims = list(draft_cp.output.get("claims") or [])
+        inspect_cp = cps.get("s2-inspect")
+        if inspect_cp and inspect_cp.output:
+            evidence_snapshot = [
+                {"evidence_id": e.get("evidence_id"), "page": e.get("page"),
+                 "document_id": e.get("document_id")}
+                for e in (inspect_cp.output.get("evidence") or [])
+            ]
+    except Exception:
+        pass
     with rt.lock:
         for item in rt.reviews.for_run(run_id):
             if item["status"] == _ReviewStatus.PENDING.value:
                 return
         rt.reviews.enqueue(
             run_id=run_id,
-            claims=[],
-            evidence_snapshot=[],
+            claims=claims,
+            evidence_snapshot=evidence_snapshot,
             risk_reasons=_review_risk_reasons(rt, plan, report.step_states),
             plan=plan,
             workspace=workspace,
             metadata={"source": "api", "goal": plan.goal, "reason": getattr(report, "reason", "")},
         )
+
+
+def _maybe_write_memory(rt: RunRuntime, plan: _ExecutionPlan, workspace: str, report) -> None:
+    """S10: post-answer governed memory write. Runs ONLY when the run
+    succeeded AND the verifier accepted the answer; generates conservative
+    candidates (session summary + evidence pointers, never user_fact /
+    decision) and offers them to the default-deny Write Gate. Any failure
+    here is logged, never propagated -- memory writes must not break the
+    answer path."""
+    try:
+        if getattr(report, "status", None) != _RunState.SUCCEEDED:
+            return
+        verify = (report.results or {}).get("s5-verify")
+        output = (verify.output or {}) if verify else {}
+        if output.get("verify_action") != "accept":
+            return
+        from app.memory.candidates import candidates_from_run
+
+        candidates = candidates_from_run(
+            run_id=str(plan.run_id),
+            goal=plan.goal,
+            answer=output.get("answer") or "",
+            claims=list(output.get("claims") or []),
+            workspace=workspace,
+        )
+        if not candidates:
+            return
+        mrt = get_memory_runtime()
+        outcomes = []
+        for candidate in candidates:
+            decision = _attempt_write(mrt.store, mrt.write_gate, candidate,
+                                      actor="memory.post_answer")
+            outcomes.append(f"{candidate.category.value}:{decision.outcome.value}")
+        appendStreamEventLog("memory_post_answer",
+                             f"run_id={plan.run_id} " + ",".join(outcomes))
+    except Exception as exc:  # noqa: BLE001 - never break the answer path
+        appendStreamEventLog("memory_post_answer_error",
+                             f"run_id={plan.run_id} {type(exc).__name__}: {exc}")
 
 
 def _execute_plan_bg(rt: RunRuntime, plan: _ExecutionPlan, workspace: str) -> None:
@@ -789,6 +1116,48 @@ def _execute_plan_bg(rt: RunRuntime, plan: _ExecutionPlan, workspace: str) -> No
     finally:
         rt._tl.run_id = None
     _maybe_enqueue_review(rt, plan, workspace, report)
+    _maybe_enqueue_verify_review(rt, plan, workspace, report)
+    _maybe_write_memory(rt, plan, workspace, report)
+
+
+def _maybe_enqueue_verify_review(rt: RunRuntime, plan: _ExecutionPlan, workspace: str, report) -> None:
+    """S6: a completed run whose verifier escalated (condition/numeric
+    mismatch, conflict) gets a review item carrying the REAL claims/evidence/
+    plan so a human can approve/edit/reject. The pre-execution pause path
+    (waiting_review) resumes the original run; this post-completion path is
+    the audit + decision trail for answers the Verifier refused to accept."""
+    if getattr(report, "status", None) != _RunState.SUCCEEDED:
+        return
+    verify = (report.results or {}).get("s5-verify")
+    output = (verify.output or {}) if verify else {}
+    if output.get("verify_action") != "review":
+        return
+    run_id = str(plan.run_id)
+    evidence_snapshot: List[Dict[str, Any]] = []
+    try:
+        cps = rt.checkpoints.load_checkpoints(run_id)
+        inspect_cp = cps.get("s2-inspect")
+        if inspect_cp and inspect_cp.output:
+            evidence_snapshot = [
+                {"evidence_id": e.get("evidence_id"), "page": e.get("page"),
+                 "document_id": e.get("document_id")}
+                for e in (inspect_cp.output.get("evidence") or [])
+            ]
+    except Exception:
+        pass
+    with rt.lock:
+        for item in rt.reviews.for_run(run_id):
+            if item["status"] == _ReviewStatus.PENDING.value:
+                return
+        rt.reviews.enqueue(
+            run_id=run_id,
+            claims=list(output.get("claims") or []),
+            evidence_snapshot=evidence_snapshot,
+            risk_reasons=[f"verify.review:{c}" for c in (output.get("reason_codes") or ["unknown"])],
+            plan=plan,
+            workspace=workspace,
+            metadata={"source": "api", "goal": plan.goal, "reason": f"verify_review:{run_id}"},
+        )
 
 
 def _resume_plan_bg(rt: RunRuntime, plan: _ExecutionPlan, workspace: str) -> None:
@@ -1090,13 +1459,22 @@ def resume_run(run_id: str) -> Dict[str, Any]:
     if record.state in {_RunState.SUCCEEDED, _RunState.CANCELLED}:
         raise HTTPException(status_code=409, detail=f"run '{run_id}' is terminal ({record.state.value})")
     plan = rt.plans.get(run_id)
-    if plan is None:
-        raise HTTPException(
-            status_code=409,
-            detail="plan for this run is not in this process' memory; "
-            "resume through its review item (POST /reviews/{id}/decision) after a restart",
-        )
-    workspace = rt.workspaces.get(run_id, record.workspace)
+    if plan is not None:
+        workspace = rt.workspaces.get(run_id, record.workspace)
+    else:
+        # S2-2: the plan map is process-local and lost on restart; rebuild
+        # plan + workspace from the durable store instead of refusing.
+        try:
+            plan, workspace = rt.checkpoints.load_plan(run_id)
+        except _RunNotFoundError:
+            raise HTTPException(
+                status_code=409,
+                detail="no persisted plan for this run; it predates plan persistence"
+                " (resume through its review item, POST /reviews/{id}/decision)",
+            )
+        with rt.lock:
+            rt.plans[run_id] = plan
+            rt.workspaces[run_id] = workspace
     worker = threading.Thread(target=_resume_plan_bg, args=(rt, plan, workspace), daemon=True)
     worker.start()
     return {"run_id": run_id, "status": "resuming"}
@@ -1181,7 +1559,30 @@ def _watch_benchmark(job_id: str, proc: "_subprocess.Popen", out_dir: Path) -> N
         job["status"] = "done" if exit_code == 0 else "failed"
         job["exit_code"] = exit_code
         job["finished_at"] = _datetime.now(_timezone.utc).isoformat()
+        # S8: Release Gate is part of the release path -- a green test run
+        # alone is not sufficient. Gate verdict rides with the job record.
+        job["gate"] = _run_release_gate(out_dir, job.get("baseline"))
         _write_benchmark_job(out_dir, job)
+
+
+def _run_release_gate(out_dir: Path, baseline: _Optional[str]) -> Dict[str, Any]:
+    try:
+        from app.eval.release_gate import evaluate_gate
+
+        report_path = out_dir / "report.json"
+        if not report_path.exists():
+            return {"gate": "fail", "reason": "report.json missing"}
+        current = json.loads(report_path.read_text(encoding="utf-8"))
+        baseline_report = {}
+        if baseline:
+            bp = Path(baseline)
+            if bp.is_dir():
+                bp = bp / "report.json"
+            if bp.exists():
+                baseline_report = json.loads(bp.read_text(encoding="utf-8"))
+        return evaluate_gate(current, baseline_report)
+    except Exception as exc:  # noqa: BLE001 - gate failure must be visible, not crash the watcher
+        return {"gate": "fail", "reason": f"gate error: {type(exc).__name__}: {exc}"}
 
 
 @app.post("/benchmarks/run", tags=["benchmarks"])
@@ -1302,6 +1703,48 @@ def get_benchmark(benchmark_id: str) -> Dict[str, Any]:
         job = {"benchmark_id": benchmark_id, "status": "done" if digest else "unknown", "out_dir": str(out_dir)}
     job["report"] = digest
     return job
+
+
+@app.get("/metrics/summary", tags=["metrics"])
+def metrics_summary() -> Dict[str, Any]:
+    """S8: the single metrics/trace read point for the dashboard -- the latest
+    benchmark run's gate verdict and per-layer status, plus live run stats.
+    The dashboard must read this instead of reimplementing any computation."""
+    latest: Dict[str, Any] = {}
+    if _EVAL_OUT_ROOT.exists():
+        runs = sorted(
+            (d for d in _EVAL_OUT_ROOT.iterdir() if (d / "job.json").exists()),
+            key=lambda d: d.name,
+        )
+        for run_dir in reversed(runs):
+            job = _read_benchmark_job(run_dir)
+            if job:
+                latest = {
+                    "benchmark_id": job.get("benchmark_id") or run_dir.name,
+                    "status": job.get("status"),
+                    "gate": (job.get("gate") or {}).get("gate"),
+                    "gate_n_fail": (job.get("gate") or {}).get("n_fail"),
+                    "finished_at": job.get("finished_at"),
+                }
+                digest = _benchmark_report_digest(run_dir)
+                if digest:
+                    latest["layers"] = {
+                        layer: {"status": info.get("status"), "n_cases": info.get("n_cases")}
+                        for layer, info in (digest.get("layers") or {}).items()
+                    }
+                break
+    rt = get_run_runtime()
+    run_listing = _list_run_records(rt, limit=1000, offset=0)
+    states: Dict[str, int] = {}
+    for item in run_listing["items"]:
+        states[item["state"]] = states.get(item["state"], 0) + 1
+    return {
+        "schema_version": "radiant-metrics-summary/v1",
+        "latest_benchmark": latest,
+        "runs_total": run_listing["total"],
+        "runs_by_state": states,
+        "memory": (lambda mrt: {"count": mrt.store.count()})(get_memory_runtime()),
+    }
 
 
 @app.get("/benchmarks", tags=["benchmarks"])
@@ -1502,7 +1945,7 @@ if FRONTEND_DIST is not None:
             StaticFiles(directory=str(assets_dir)),
             name="static-assets",
         )
-    
+
     # Catch-all route: serve index.html for any route not matched by API endpoints above
     # FastAPI matches routes in registration order, so API routes take precedence
     @app.get("/{full_path:path}")
