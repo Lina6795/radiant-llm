@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from app.control.models import ExecutionPlan
 from app.durable._sqlite import ConnectionFactory, StoreBase
 from app.durable.errors import DurableError, RunNotFoundError
 from app.durable.graph import RunState, StepState
@@ -91,6 +92,12 @@ class CheckpointStore(StoreBase):
                     config_fingerprint TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     PRIMARY KEY (run_id, step_id)
+                );
+                CREATE TABLE IF NOT EXISTS run_plans (
+                    run_id TEXT PRIMARY KEY,
+                    plan_json TEXT NOT NULL,
+                    workspace TEXT NOT NULL,
+                    created_at REAL NOT NULL
                 );
                 """
             )
@@ -216,3 +223,28 @@ class CheckpointStore(StoreBase):
                 created_at=row["created_at"],
             )
         return result
+
+    # -- persisted plans (S2-2) ----------------------------------------------
+
+    def save_plan(self, run_id: str, plan: "ExecutionPlan", workspace: str) -> None:
+        """Persist the full ExecutionPlan + workspace so a restart can resume
+        without any process-in-memory state (rt.plans)."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO run_plans (run_id, plan_json, workspace, created_at)"
+                " VALUES (?,?,?,?)"
+                " ON CONFLICT(run_id) DO UPDATE SET"
+                " plan_json=excluded.plan_json, workspace=excluded.workspace",
+                (run_id, plan.model_dump_json(), workspace, self._now()),
+            )
+
+    def load_plan(self, run_id: str) -> tuple["ExecutionPlan", str]:
+        """Rebuild (plan, workspace) from the durable store. Raises
+        RunNotFoundError when neither a run record nor a persisted plan exists."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT plan_json, workspace FROM run_plans WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise RunNotFoundError(run_id)
+        return ExecutionPlan.model_validate_json(row["plan_json"]), row["workspace"]

@@ -22,6 +22,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.control.binding import (
+    MalformedReference,
+    dependency_closure,
+    is_reference,
+    parse_expects,
+    parse_path,
+    parse_reference,
+    static_type_compatible,
+)
 from app.control.budget import DEFAULT_CAPS, BudgetCaps
 from app.control.models import ExecutionPlan, GuardResult, PlanStep, ReasonCode
 from app.control.registry import ToolRegistry
@@ -124,7 +133,7 @@ class SchemaGuard:
             if spec is None:
                 codes.append(f"{ReasonCode.GUARD_UNKNOWN_TOOL.value}:{step.tool}")
                 continue
-            codes.extend(validate_arguments(step.arguments, spec.arguments_schema))
+            codes.extend(self._validate_step_arguments(step, spec.arguments_schema, plan, seen))
             if step.risk != spec.risk:
                 codes.append(
                     f"{ReasonCode.GUARD_RISK_MISMATCH.value}:{step.step_id}"
@@ -155,3 +164,63 @@ class SchemaGuard:
             )
 
         return GuardResult(ok=not codes, reason_codes=codes)
+
+    def _validate_step_arguments(
+        self, step: PlanStep, schema: dict, plan: ExecutionPlan, seen: set[str]
+    ) -> list[str]:
+        """Literal schema validation plus static step-output-reference checks.
+
+        Referenced keys are exempt from literal required/type checks (their
+        value comes from an earlier step's output); each reference itself must
+        name an existing step inside the dependency closure, use valid path
+        syntax, and declare a type statically compatible with the target
+        argument. Pure-literal plans take exactly the old code path.
+        """
+        codes: list[str] = []
+        properties = schema.get("properties", {})
+        allow_extra = schema.get("additionalProperties", True)
+
+        bound: dict[str, Any] = {}
+        for key, value in step.arguments.items():
+            if not is_reference(value):
+                continue
+            try:
+                reference = parse_reference(value)
+            except MalformedReference:
+                codes.append(f"{ReasonCode.GUARD_BINDING_INVALID_PATH.value}:{step.step_id}:{key}")
+                continue
+            codes.extend(self._validate_binding(step, key, reference, schema, plan, seen))
+            if key not in properties and not allow_extra:
+                codes.append(f"{ReasonCode.GUARD_UNEXPECTED_ARGUMENT.value}:{key}")
+            else:
+                bound[key] = reference
+
+        if not bound:
+            return codes + validate_arguments(step.arguments, schema)
+
+        schema_view = dict(schema)
+        schema_view["required"] = [r for r in schema.get("required", []) if r not in bound]
+        literal_args = {k: v for k, v in step.arguments.items() if k not in bound}
+        return codes + validate_arguments(literal_args, schema_view)
+
+    def _validate_binding(
+        self, step: PlanStep, key: str, reference, schema: dict, plan: ExecutionPlan, seen: set[str]
+    ) -> list[str]:
+        codes: list[str] = []
+        if reference.from_step not in seen:
+            codes.append(
+                f"{ReasonCode.GUARD_BINDING_UNKNOWN_STEP.value}:{step.step_id}->{reference.from_step}"
+            )
+            return codes
+        steps_by_id = {s.step_id: s for s in plan.steps}
+        if reference.from_step not in dependency_closure(step, steps_by_id):
+            codes.append(
+                f"{ReasonCode.GUARD_BINDING_NOT_IN_CLOSURE.value}:{step.step_id}->{reference.from_step}"
+            )
+        if parse_path(reference.path) is None:
+            codes.append(f"{ReasonCode.GUARD_BINDING_INVALID_PATH.value}:{step.step_id}:{key}")
+        if parse_expects(reference.expects) is None or not static_type_compatible(
+            reference.expects, schema.get("properties", {}).get(key, {})
+        ):
+            codes.append(f"{ReasonCode.GUARD_BINDING_TYPE_MISMATCH.value}:{step.step_id}:{key}")
+        return codes

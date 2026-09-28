@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -231,30 +232,93 @@ def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     return {"type": _OBJECT, "properties": properties, "required": required, "additionalProperties": False}
 
 
-def build_default_registry() -> ToolRegistry:
+def _context_assemble_version() -> str:
+    from app.context.assemble_adapter import TOOL_VERSION
+
+    return TOOL_VERSION
+
+
+def _context_assemble_handler():
+    from app.context.assemble_adapter import context_assemble_handler
+
+    return context_assemble_handler
+
+
+def _answer_version(kind: str) -> str:
+    from app.verification import answer_tools
+
+    return answer_tools.TOOL_VERSION_DRAFT if kind == "draft" else answer_tools.TOOL_VERSION_VERIFY
+
+
+def _answer_handler(kind: str):
+    from app.verification import answer_tools
+
+    return answer_tools.answer_draft_handler if kind == "draft" else answer_tools.answer_verify_handler
+
+
+def build_default_registry(evidence: str = "mock") -> ToolRegistry:
     reg = ToolRegistry()
+
+    # S1-3/S1-5: real read-only evidence handlers for production wiring
+    # (evidence="real"); default stays mock so the test baseline is untouched.
+    # The RADIANT_EVIDENCE_*_REAL flags remain as per-tool escape hatches.
+    real_search = evidence == "real" or os.getenv("RADIANT_EVIDENCE_SEARCH_REAL") == "1"
+    search_handler = _evidence_search
+    search_version = MOCK_TOOL_VERSION
+    search_description = "Mock: search the evidence store."
+    if real_search:
+        from app.evidence.search_adapter import TOOL_VERSION, evidence_search_handler
+
+        search_handler = evidence_search_handler
+        search_version = TOOL_VERSION
+        search_description = "Read-only keyword search over the KB resolved to real evidence IDs."
+
+    # S1-4/S1-5 feature flag: real batch evidence.inspect by evidence_ids.
+    real_inspect = evidence == "real" or os.getenv("RADIANT_EVIDENCE_INSPECT_REAL") == "1"
+    inspect_handler = _evidence_inspect
+    inspect_version = MOCK_TOOL_VERSION
+    inspect_description = "Mock: inspect one evidence document."
+    inspect_schema = _schema({"doc_id": {"type": "string"}}, ["doc_id"])
+    if real_inspect:
+        from app.evidence.inspect_adapter import TOOL_VERSION as _INSPECT_VERSION
+        from app.evidence.inspect_adapter import evidence_inspect_handler
+
+        inspect_handler = evidence_inspect_handler
+        inspect_version = _INSPECT_VERSION
+        inspect_description = "Read-only batch fetch of evidence records by evidence_ids."
+        inspect_schema = _schema(
+            {
+                "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                "workspace_id": {"type": "string"},
+            },
+            ["evidence_ids"],
+        )
 
     mocks = [
         ToolSpec(
             name="evidence.search",
-            version=MOCK_TOOL_VERSION,
+            version=search_version,
             risk=Risk.READ_ONLY,
-            description="Mock: search the evidence store.",
+            description=search_description,
             arguments_schema=_schema(
-                {"query": {"type": "string"}, "top_k": {"type": "integer"}},
+                {
+                    "query": {"type": "string"},
+                    "top_k": {"type": "integer"},
+                    "workspace_id": {"type": "string"},
+                },
                 ["query"],
             ),
             implemented=True,
-            handler=_evidence_search,
+            handler=search_handler,
         ),
         ToolSpec(
             name="evidence.inspect",
-            version=MOCK_TOOL_VERSION,
+            version=inspect_version,
             risk=Risk.READ_ONLY,
-            description="Mock: inspect one evidence document.",
-            arguments_schema=_schema({"doc_id": {"type": "string"}}, ["doc_id"]),
+            description=inspect_description,
+            arguments_schema=inspect_schema,
             implemented=True,
-            handler=_evidence_inspect,
+            handler=inspect_handler,
         ),
         ToolSpec(
             name="citation.validate",
@@ -286,6 +350,62 @@ def build_default_registry() -> ToolRegistry:
             ),
             implemented=True,
             handler=_report_export,
+        ),
+        # S4-5: deterministic context assembly with budget trace. No flag:
+        # the handler is pure (no I/O beyond the evidence store) and the
+        # ContextPackage trace is required before any future model call.
+        ToolSpec(
+            name="context.assemble",
+            version=_context_assemble_version(),
+            risk=Risk.READ_ONLY,
+            description="Assemble a budgeted ContextPackage from evidence records (budget trace required before any LLM call).",
+            arguments_schema=_schema(
+                {
+                    "evidence_records": {"type": "array", "items": {"type": "object"}},
+                    "question": {"type": "string"},
+                    "workspace_id": {"type": "string"},
+                    "pinned_evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    "evidence_budget_tokens": {"type": "integer"},
+                },
+                ["evidence_records"],
+            ),
+            implemented=True,
+            handler=_context_assemble_handler(),
+        ),
+        # S6: bounded answer chain. answer.draft requires the ContextPackage
+        # (budget trace) and answer.verify is the only way an answer may be
+        # finalized -- the answering model can never bypass the Verifier.
+        ToolSpec(
+            name="answer.draft",
+            version=_answer_version("draft"),
+            risk=Risk.READ_ONLY,
+            description="LLM draft from a ContextPackage (requires budget trace; typed error otherwise).",
+            arguments_schema=_schema(
+                {
+                    "context_package": {"type": "object"},
+                    "question": {"type": "string"},
+                },
+                ["context_package", "question"],
+            ),
+            implemented=True,
+            handler=_answer_handler("draft"),
+        ),
+        ToolSpec(
+            name="answer.verify",
+            version=_answer_version("verify"),
+            risk=Risk.READ_ONLY,
+            description="Claim-level verification of a draft against evidence; one bounded revise; structured verdicts.",
+            arguments_schema=_schema(
+                {
+                    "draft": {"type": "string"},
+                    "evidence_records": {"type": "array", "items": {"type": "object"}},
+                    "question": {"type": "string"},
+                    "allow_revise": {"type": "boolean"},
+                },
+                ["draft", "evidence_records"],
+            ),
+            implemented=True,
+            handler=_answer_handler("verify"),
         ),
     ]
 

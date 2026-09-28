@@ -34,9 +34,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from app.control.binding import (
+    BindingResolutionError,
+    is_reference,
+    resolve_step_arguments,
+)
 from app.control.models import (
     ExecutionPlan,
     PlanStep,
+    ReasonCode,
     RetryPolicy,
     ToolError,
     ToolMetrics,
@@ -44,8 +50,9 @@ from app.control.models import (
     ToolStatus,
 )
 from app.control.registry import ToolRegistry
+from app.control.schema_guard import validate_arguments
 from app.durable.checkpoint import Checkpoint, CheckpointStore
-from app.durable.errors import CheckpointMismatchError, DurableError, LeaseFencingError
+from app.durable.errors import CheckpointMismatchError, DurableError, LeaseConflictError, LeaseFencingError
 from app.durable.events import EventStore, EventType
 from app.durable.graph import (
     RunState,
@@ -172,6 +179,7 @@ class DurableRunner:
             owner=self.owner,
             config_fingerprint=fingerprint,
         )
+        self.checkpoints.save_plan(run_id, plan, workspace)
         self._set_run_state(run_id, RunState.PENDING, RunState.RUNNING)
         self.events.append(
             run_id,
@@ -200,9 +208,10 @@ class DurableRunner:
 
     def resume(
         self,
-        plan: ExecutionPlan,
-        workspace: str = "default",
+        plan: ExecutionPlan | None = None,
+        workspace: str | None = None,
         *,
+        run_id: str | None = None,
         owner: str | None = None,
         force_takeover: bool = False,
         allow_config_mismatch: bool = False,
@@ -214,12 +223,24 @@ class DurableRunner:
         auditable: the ``run_resumed`` event and the report name the restored
         checkpoints, the stored/requested config fingerprints and the new
         fencing token.
+
+        S2-2: ``plan`` may be omitted when ``run_id`` is given -- plan and
+        workspace are then rebuilt from the durable store (``run_plans``
+        table), so a restart never depends on process-in-memory plan maps.
         """
+        if plan is None:
+            if run_id is None:
+                raise DurableError("resume requires a plan or a run_id to load one")
+            plan, stored_workspace = self.checkpoints.load_plan(run_id)
+            if workspace is None:
+                workspace = stored_workspace
         run_id = str(plan.run_id)
         record = self.checkpoints.get_run(run_id)
         fingerprint = config_fingerprint(plan, self.registry)
         if fingerprint != record.config_fingerprint and not allow_config_mismatch:
             raise CheckpointMismatchError(run_id, record.config_fingerprint, fingerprint)
+        if workspace is None:
+            workspace = record.workspace
 
         restored = self.checkpoints.load_checkpoints(run_id)
         restored_steps = sorted(s for s, cp in restored.items() if cp.state == StepState.SUCCEEDED)
@@ -349,15 +370,17 @@ class DurableRunner:
                 # Fencing: validate before the node *and* again after the
                 # hook, so a takeover observed by the hook still blocks the
                 # stale owner's tool call.
+                lease = self._renew_lease(run_id, lease)
                 self.leases.validate(run_id, lease.owner, lease.fencing_token)
                 if self.before_node is not None:
                     self.before_node(run_id, step_id)
+                lease = self._renew_lease(run_id, lease)
                 self.leases.validate(run_id, lease.owner, lease.fencing_token)
                 if token.cancelled or self.checkpoints.cancel_requested(run_id):
                     return self._finalize_cancel(run_id, graph, results, attempts, tools_executed, resume_info)
 
                 result, n_attempts = self._execute_step(
-                    step, graph, run_id, workspace, token, fingerprint=resume_info.config_fingerprint
+                    step, graph, run_id, workspace, token, lease, fingerprint=resume_info.config_fingerprint
                 )
                 results[step_id] = result
                 attempts[step_id] = n_attempts
@@ -387,6 +410,8 @@ class DurableRunner:
                     )
 
             current = self.checkpoints.get_run(run_id).state
+            lease = self._renew_lease(run_id, lease)
+            self.leases.validate(run_id, lease.owner, lease.fencing_token)
             self._set_run_state(run_id, current, RunState.SUCCEEDED)
             self.events.append(
                 run_id,
@@ -427,13 +452,26 @@ class DurableRunner:
         run_id: str,
         workspace: str,
         token: CancelToken,
+        lease: Lease,
         *,
         fingerprint: str,
     ) -> tuple[ToolResult, int]:
         step_id = step.step_id
         graph.transition(step_id, StepState.RUNNING)
         self._save_step(run_id, step_id, StepState.RUNNING, attempt=1, fingerprint=fingerprint)
-        self.events.append(run_id, EventType.NODE_STARTED, {"step_id": step_id, "tool": step.tool})
+        spec = self.registry.get(step.tool)
+        has_bindings = any(is_reference(v) for v in step.arguments.values())
+        self.events.append(
+            run_id,
+            EventType.NODE_STARTED,
+            {
+                "step_id": step_id,
+                "tool": step.tool,
+                "resolved_arg_keys": sorted(
+                    k for k, v in step.arguments.items() if is_reference(v)
+                ),
+            },
+        )
 
         attempt = 0
         while True:
@@ -443,9 +481,17 @@ class DurableRunner:
                 self._save_step(run_id, step_id, StepState.RUNNING, attempt=attempt, fingerprint=fingerprint)
             if token.cancelled:
                 raise _RunCancelledSignal()
-            result = self._invoke_isolated(step, run_id, workspace, token)
+            result = self._resolve_and_invoke(step, spec, run_id, workspace, token, has_bindings)
             if result.error is not None and result.error.code == "run.cancelled":
                 raise _RunCancelledSignal()
+
+            # S2-6: the tool ran while the lease may have been taken over.
+            # A stale owner must not commit checkpoints/events: fence BEFORE
+            # any state mutation below. Renew first so a merely-long tool
+            # call does not fence its own rightful owner; a genuine takeover
+            # still fails the renew-acquire.
+            lease = self._renew_lease(run_id, lease)
+            self.leases.validate(run_id, lease.owner, lease.fencing_token)
 
             if result.status == ToolStatus.SUCCESS:
                 graph.transition(step_id, StepState.SUCCEEDED)
@@ -500,8 +546,66 @@ class DurableRunner:
             )
             return result, attempt
 
+    def _resolve_and_invoke(
+        self,
+        step: PlanStep,
+        spec,
+        run_id: str,
+        workspace: str,
+        token: CancelToken,
+        has_bindings: bool,
+    ) -> ToolResult:
+        """Resolve step-output references (S1-7B) then invoke the tool.
+
+        Resolution reads only *succeeded* checkpoint outputs from the durable
+        store, so in-process runs, retries, and cross-process resumes all use
+        identical inputs. Any resolution or re-validation failure is a typed
+        TERMINAL_ERROR and the tool handler is never called.
+        """
+        arguments = step.arguments
+        if has_bindings:
+            if spec is None:
+                return ToolResult(
+                    status=ToolStatus.TERMINAL_ERROR,
+                    error=ToolError(
+                        code=ReasonCode.GUARD_UNKNOWN_TOOL.value,
+                        message=f"unknown tool {step.tool}",
+                        retryable=False,
+                    ),
+                    metrics=ToolMetrics(latency_ms=0, token_count=0),
+                )
+            try:
+                sources = {
+                    cid: cp.output or {}
+                    for cid, cp in self.checkpoints.load_checkpoints(run_id).items()
+                    if cp.state == StepState.SUCCEEDED
+                }
+                arguments, trace_records = resolve_step_arguments(
+                    step, spec.arguments_schema, sources
+                )
+                for record in trace_records:
+                    self.events.append(run_id, EventType.BINDING_RESOLVED, record)
+                schema_codes = validate_arguments(arguments, spec.arguments_schema)
+                if schema_codes:
+                    return ToolResult(
+                        status=ToolStatus.TERMINAL_ERROR,
+                        error=ToolError(
+                            code=schema_codes[0],
+                            message="resolved arguments failed tool schema validation",
+                            retryable=False,
+                        ),
+                        metrics=ToolMetrics(latency_ms=0, token_count=0),
+                    )
+            except BindingResolutionError as exc:
+                return ToolResult(
+                    status=ToolStatus.TERMINAL_ERROR,
+                    error=ToolError(code=exc.code, message=exc.message, retryable=False),
+                    metrics=ToolMetrics(latency_ms=0, token_count=0),
+                )
+        return self._invoke_isolated(step, run_id, workspace, token, arguments)
+
     def _invoke_isolated(
-        self, step: PlanStep, run_id: str, workspace: str, token: CancelToken
+        self, step: PlanStep, run_id: str, workspace: str, token: CancelToken, arguments: dict
     ) -> ToolResult:
         """Invoke the tool in a daemon thread so a hung node can be bounded
         by ``timeout_ms`` and interrupted by the cancel token. Tool exceptions
@@ -511,7 +615,7 @@ class DurableRunner:
         def target() -> None:
             try:
                 holder["result"] = self.registry.invoke(
-                    step.tool, step.arguments, run_id=run_id, workspace=workspace
+                    step.tool, arguments, run_id=run_id, workspace=workspace
                 )
             except BaseException as exc:  # noqa: BLE001 - re-raised below
                 holder["exc"] = exc
@@ -545,6 +649,20 @@ class DurableRunner:
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
+
+    def _renew_lease(self, run_id: str, lease: Lease) -> Lease:
+        """Renew the lease when it is within half a TTL of expiring (long tool
+        calls routinely outlive lease_ttl_s). Same-owner acquire bumps the
+        fencing token; a different live owner raises LeaseConflictError,
+        normalized here into the fencing signal every commit path handles.
+        Far-from-expiry renewals are skipped so short runs keep a stable
+        single fencing token."""
+        if lease.expires_at - self.leases._now() > self.lease_ttl_s / 2:
+            return lease
+        try:
+            return self.leases.acquire(run_id, self.owner, self.lease_ttl_s)
+        except LeaseConflictError as exc:
+            raise LeaseFencingError(run_id, self.owner, f"renew blocked: {exc}") from exc
 
     def _save_step(
         self,

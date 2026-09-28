@@ -3,6 +3,7 @@ node-level timeout mapped to retryable_error."""
 
 from __future__ import annotations
 
+import threading
 import time
 
 from app.control.models import RetryPolicy, ToolStatus
@@ -138,25 +139,32 @@ def test_backoff_delays_use_injected_clock() -> None:
 
 
 def test_node_timeout_is_retryable_and_bounded(tmp_path) -> None:
+    """Deterministic: the node blocks on an Event the test never sets until
+    after the run returned, so the tool cannot complete early regardless of
+    scheduling load -- the runner can only finish via the timeout path."""
     stores = Stores(tmp_path / "timeout.db")
     registry = build_default_registry()
     calls: list[str] = []
+    finished: list[str] = []
+    release = threading.Event()
 
     def slow(arguments, ctx):
         calls.append("slow")
-        time.sleep(1.0)
+        release.wait(timeout=30.0)  # blocks until the test releases it
+        finished.append("slow")
         return counting_handler([], name="slow")(arguments, ctx)
 
     register_test_tool(registry, "test.slow", slow)
     plan = make_plan([make_step("n", "test.slow", timeout_ms=50, retry_policy=RetryPolicy.NONE)])
-    started = time.monotonic()
-    report = _runner(stores, registry).run(plan)
-    elapsed = time.monotonic() - started
-    assert report.status == RunState.FAILED
-    assert report.results["n"].status == ToolStatus.RETRYABLE_ERROR
-    assert report.results["n"].error.code == "node.timeout"
-    assert elapsed < 0.9  # the runner did not wait for the hung node
-    stores.close()
+    try:
+        report = _runner(stores, registry).run(plan)
+        assert report.status == RunState.FAILED
+        assert report.results["n"].status == ToolStatus.RETRYABLE_ERROR
+        assert report.results["n"].error.code == "node.timeout"
+        assert finished == []  # runner returned while the node was still hung
+    finally:
+        release.set()  # let the abandoned daemon thread exit
+        stores.close()
 
 
 def test_real_clock_backoff_classifies() -> None:

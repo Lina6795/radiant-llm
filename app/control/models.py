@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +23,7 @@ class ReasonCode(str, Enum):
     ROUTER_LOW_CONFIDENCE = "router.low_confidence"
     ROUTER_EMPTY_INPUT = "router.empty_input"
     ROUTER_INJECTION_SUSPECTED = "router.injection_suspected"
+    ROUTER_CITATION_DEMAND = "router.citation_demand"
     ROUTER_ERROR = "router.error"
 
     # Planner
@@ -41,6 +42,10 @@ class ReasonCode(str, Enum):
     GUARD_BUDGET_EXCEEDS_CAP = "guard.budget_exceeds_cap"
     GUARD_RISK_MISMATCH = "guard.risk_mismatch"
     GUARD_TOO_MANY_STEPS = "guard.too_many_steps"
+    GUARD_BINDING_UNKNOWN_STEP = "guard.binding_unknown_step"
+    GUARD_BINDING_NOT_IN_CLOSURE = "guard.binding_not_in_closure"
+    GUARD_BINDING_INVALID_PATH = "guard.binding_invalid_path"
+    GUARD_BINDING_TYPE_MISMATCH = "guard.binding_type_mismatch"
 
     # Policy Engine
     POLICY_ALLOWED = "policy.allowed"
@@ -54,6 +59,10 @@ class ReasonCode(str, Enum):
     TOOL_NOT_IMPLEMENTED = "tool.not_implemented"
     TOOL_EXECUTION_ERROR = "tool.execution_error"
     RUNTIME_BUDGET_EXHAUSTED = "runtime.budget_exhausted"
+    RUNTIME_BINDING_PATH_MISSING = "runtime.binding_path_missing"
+    RUNTIME_BINDING_TYPE_MISMATCH = "runtime.binding_type_mismatch"
+    RUNTIME_BINDING_EMPTY = "runtime.binding_empty"
+    RUNTIME_BINDING_SOURCE_NOT_SUCCEEDED = "runtime.binding_source_not_succeeded"
 
 
 class Intent(str, Enum):
@@ -112,6 +121,18 @@ class RunStatus(str, Enum):
     FAILED = "failed"
 
 
+class QueryRequest(BaseModel):
+    """Entry contract for the first vertical slice (read-only PDF QA).
+    Replaces ad-hoc dicts at the API boundary so malformed requests fail
+    at validation time instead of deep inside the chain."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1)
+    workspace_id: str = "default"
+    session_id: Optional[str] = None
+
+
 class ResponseContract(BaseModel):
     """Answer-format requirement. Deliberately decoupled from tool routing:
     the Policy Engine never reads this field, so formatting demands can never
@@ -132,6 +153,24 @@ class RouterDecision(BaseModel):
     working_subject: Optional[str] = None
     reason_codes: list[str] = Field(min_length=1)
     response_contract: ResponseContract = Field(default_factory=ResponseContract)
+
+
+class StepOutputReference(BaseModel):
+    """Controlled value type embedded in PlanStep.arguments (ADR-0003).
+
+    Marks an argument whose value must be resolved at execution time from the
+    succeeded checkpoint output of an earlier step. ``ref`` is the
+    discriminating marker: dicts without it are ordinary literals.
+    ``path`` uses the restricted syntax ``output(.key|[*])+`` -- no numeric
+    indices, slices, or arbitrary expressions.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ref: Literal["step_output"] = "step_output"
+    from_step: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    expects: str = Field(min_length=1)
 
 
 class PlanStep(BaseModel):

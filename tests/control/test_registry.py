@@ -10,6 +10,9 @@ MOCK_TOOLS = {
     "evidence.inspect": Risk.READ_ONLY,
     "citation.validate": Risk.READ_ONLY,
     "report.export": Risk.BOUNDED_WRITE,
+    "context.assemble": Risk.READ_ONLY,
+    "answer.draft": Risk.READ_ONLY,
+    "answer.verify": Risk.READ_ONLY,
 }
 
 LEGACY_TOOLS = {

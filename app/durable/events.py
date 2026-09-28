@@ -32,6 +32,7 @@ class EventType(str, Enum):
     RUN_RESUMED = "run_resumed"
     LEASE_ACQUIRED = "lease_acquired"
     LEASE_TAKEN_OVER = "lease_taken_over"
+    BINDING_RESOLVED = "binding_resolved"
 
 
 @dataclass

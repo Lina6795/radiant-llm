@@ -28,14 +28,15 @@ from app.control.registry import ToolRegistry
 # Workspace ACLs for the M2 skeleton. A workspace not listed here is denied
 # every tool (fail closed).
 DEFAULT_WORKSPACE_ACLS: dict[str, set[str]] = {
-    "default": {"evidence.search", "evidence.inspect", "citation.validate", "report.export"},
-    "readonly": {"evidence.search", "evidence.inspect", "citation.validate"},
-    "lowbudget": {"evidence.search", "evidence.inspect", "citation.validate", "report.export"},
+    "default": {"evidence.search", "evidence.inspect", "citation.validate", "report.export", "context.assemble", "answer.draft", "answer.verify"},
+    "readonly": {"evidence.search", "evidence.inspect", "citation.validate", "context.assemble", "answer.draft", "answer.verify"},
+    "lowbudget": {"evidence.search", "evidence.inspect", "citation.validate", "report.export", "context.assemble", "answer.draft", "answer.verify"},
     # Privileged workspace: every registered tool is in the ACL, but external
     # and high-risk tools still require review and legacy metadata-only tools
     # still cannot execute in M2.
     "full": {
         "evidence.search", "evidence.inspect", "citation.validate", "report.export",
+        "context.assemble", "answer.draft", "answer.verify",
         "PDFReaderTool", "PDFKnowledgeBaseSanitizerTool", "URLValidationTool",
         "WebSearchTool", "WebScraperTool", "WikipediaSearchTool", "PythonREPLTool",
         "ImageAnalysisTool", "CSVandExcelFileParserTool", "CSVDataFinderTool",

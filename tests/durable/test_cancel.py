@@ -73,22 +73,30 @@ def test_cancel_between_nodes_produces_no_new_tool_calls(tmp_path) -> None:
 
 
 def test_cancel_token_interrupts_running_node(tmp_path) -> None:
+    """Deterministic version: synchronization via threading.Event instead of
+    wall-clock sleeps. Correctness must not depend on scheduling speed, so
+    there is no elapsed-time assertion -- the proof of interruption is that
+    the blocked tool observed the cancel token (exit_reasons == [True])."""
     stores = Stores(tmp_path / "token.db")
     registry = build_default_registry()
     calls: list[str] = []
+    exit_reasons: list[bool] = []  # True == exited because the token fired
+    node_started = threading.Event()
     holder: dict = {}
 
     def token_aware(arguments, ctx):
         calls.append("aware")
         token = holder["runner"].cancel_token(ctx.run_id)
-        deadline = time.monotonic() + 5.0
+        node_started.set()
+        deadline = time.monotonic() + 30.0  # fallback only; never the pass condition
         while not token.cancelled and time.monotonic() < deadline:
             time.sleep(0.005)
+        exit_reasons.append(token.cancelled)
         return counting_handler([], name="aware")(arguments, ctx)
 
     register_test_tool(registry, "test.aware", token_aware)
     plan = make_plan(
-        [make_step("n1", "test.aware", timeout_ms=10_000), make_step("n2", "test.aware", depends_on=["n1"])]
+        [make_step("n1", "test.aware", timeout_ms=60_000), make_step("n2", "test.aware", depends_on=["n1"])]
     )
     runner = _runner(stores, registry)
     holder["runner"] = runner
@@ -101,14 +109,12 @@ def test_cancel_token_interrupts_running_node(tmp_path) -> None:
 
     thread = threading.Thread(target=drive)
     thread.start()
-    time.sleep(0.1)  # let n1 start
-    started = time.monotonic()
+    assert node_started.wait(timeout=30.0)  # n1 is running; no fixed sleep guess
     runner.cancel(run_id)
-    thread.join(timeout=5.0)
-    elapsed = time.monotonic() - started
+    thread.join(timeout=30.0)
 
     assert not thread.is_alive()
-    assert elapsed < 2.0  # the running node noticed the token quickly
+    assert exit_reasons == [True]  # the running node was interrupted by the token
     report = result["report"]
     assert report.status == RunState.CANCELLED
     assert calls == ["aware"]  # n2 never started: no new tool calls after cancel
