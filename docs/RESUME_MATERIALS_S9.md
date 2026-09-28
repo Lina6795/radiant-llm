@@ -2,7 +2,7 @@
 
 ## 简历 4～5 行
 
-- 在 RADIANT-LLM（核工程 PDF Agent）上落地了一条**可计划、可校验、可恢复的受控 Agent 主链**：确定性中英文意图路由 → 结构化五步计划（search→inspect→context→draft→verify）→ Schema/Policy 前置校验（非法计划工具调用 0 次）→ Durable 执行（checkpoint/fencing/typed retry/租约续约），步骤间数据用结构化输出引用绑定（禁模板 eval），全链 557 项测试以裸 `python -m pytest -q` 独立通过（不依赖任何存活服务进程）。
+- 在 RADIANT-LLM（核工程 PDF Agent）上落地了一条**可计划、可校验、可恢复的受控 Agent 主链**：确定性中英文意图路由 → 结构化五步计划（search→inspect→context→draft→verify）→ Schema/Policy 前置校验（非法计划工具调用 0 次）→ Durable 执行（checkpoint/fencing/typed retry/租约续约），步骤间数据用结构化输出引用绑定（禁模板 eval），全链 567 项测试以裸 `python -m pytest -q` 独立通过（不依赖任何存活服务进程）。
 - 实现 **BM25+Dense+RRF 混合检索与 metadata/相关性/充分性门**：修复了版本化证据错版命中缺陷（8/8 冻结 case 旧版命中→0），四配置对照 hybrid 为唯一 hit@5 8/8 配置；诚实决策不采用 Cross-Encoder（无模型+离线，ADR 含复评条件）。
 - 实现**预算化上下文与可治理 Memory**：ContextPackage 分区预算+来源配额+锚点保护+去重+邻居扩展（无预算 trace 不调模型）；Write Gate 默认拒绝（write_precision 1.0，含 secret/injection/evidence-as-fact 攻击电池全拒）、Read Gate 跨 workspace 泄漏 0（口径：workspace 逻辑隔离，非用户身份认证）；写入路径为显式 `POST /memories` + 回答被 accept 后自动写 session 摘要/证据指针（user_fact/decision 仍需人工确认，禁止自动提升）。
 - 实现**有界 Draft→Claim→Verify→Revise/Review 回答验证**：确定性 atomic claim 抽取与 Claim-Evidence Map，每条 claim 产出 supported/unsupported/conflict/out-of-scope verdict，反思修订最多一次；verify 前预暂停路径支持 approve/reject 恢复原 run，verify 后 review 结局进人工审核队列留审计轨迹。
@@ -21,7 +21,8 @@
 - 语料规模：单 PDF（attention 论文）基线；指标为小样本行为验证，不作泛化质量宣称。
 - 视觉证据全部 figure-level（无 bbox），未宣称 region-level；VLM 描述不等于视觉事实证明（Visual Fact Gate 已强制）。
 - 确定性 Verifier 偏严格：真实 LLM 回答常升级人工 review，这是设计语义不是错误；judge 与人工一致性样本仅 1（agreement=false 已记录）。
-- E2E 质量口径（S10 修订）：6 个 E2E case 的 Agent 链全部执行成功，但 verify 全部升级 review（supported claim 比例低，TEACH-T01 仅 1/5）；S10 起 review 不再计入 pass——execution 6/6、accept 0/6 如实记录，"回答质量好"不作宣称。
+- E2E 质量口径（S10 修订）：6 个 E2E case 的 Agent 链全部执行成功，但 verify 多数升级 review（S10 实跑：accept 1/6、review 5/6、supported_claim_rate 0.375）；S10 起 review 不再计入 pass——"回答质量好"不作宣称。
+- Release Gate 当前候选实跑记红（`artifacts/eval/s10-20260928-200710/gate.json`）：recall@20 漂移 −0.001（单负例波动）与 verification.hr 上升（更严验证器的真实效应）触发 fail-closed；两条均待后续阶段处置，不放宽阈值。
 - 未实现 Cross-Encoder（无模型+离线）、未接入 LangGraph（自研 StateGraph，诚实命名）、旧链 /stream-query 仍保留为 legacy 流式面。
 - 退出期 C 级 abort（S9-4 诊断中，见下节）偶发；不影响已完成的测试结论。
 

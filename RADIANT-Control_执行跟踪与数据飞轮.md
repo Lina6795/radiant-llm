@@ -635,3 +635,37 @@ Trace / Review / User Feedback
 | 0001 | project-boundary | 待写 | 未开始 | `docs/adr/0001-project-boundary.md` |
 | 0002 | evidence-identity | 待写 | 未开始 | `docs/adr/0002-evidence-identity.md` |
 | — | （后续 ADR 在此追加：如 durable 命名避开 runtime/、Dashboard 独立静态页方案、reranker 取舍等） | | | |
+
+---
+
+## 16. S10：Release Audit（2026-09-28）
+
+收口动机：外部审计确认 S1–S7 核心控制已实现，但验收口径存在「review 当 pass、已接线当已通过」问题，且测试依赖写死 PID、pytest.ini 被删、工作区 37 改 + 52 未跟踪无提交。S10 不加新功能，只做收口。
+
+### 修复项
+
+| 项 | 处理 | 证据 |
+|---|---|---|
+| `/proc/4915/environ` 硬编码 | 测试与 kill_restart_driver 均改为自包含（baseline artifacts + 占位 key 仅用于 legacy import 期） | `tests/durable/test_real_tools_crash_resume.py`；裸 `python -m pytest -q` → **567 passed, 0 error** |
+| pytest.ini 被删 | 恢复并加 `norecursedirs`（runtime/ 内 3041 个 vendored test 文件不再被误收集） | `pytest.ini` |
+| E2E review=pass | 判定拆分：pass 仅 accept；review 单列（不计 pass 不计 fail）；每 case 落 trace_uri/config_fingerprint/latency；层指标进 metrics_flat | `app/eval/agent_e2e.py`；`tests/eval/test_agent_e2e_verdicts.py`（5 回归测试） |
+| Memory 回答后写入 | 新增 `app/memory/candidates.py`：accept 后自动写 session 摘要（7 天 TTL）+ evidence_pointer；user_fact/decision 仍需人工确认；Write Gate 默认拒绝不变；hook 失败不影响回答链 | `tests/memory/test_post_answer_write.py`、`tests/api/test_memories.py`（含真链 E2E 断言） |
+| smoke 不一键 | `SMOKE_START=1` 自启动临时服务（空闲端口、健康轮询、退出清理），输出落盘 | `artifacts/verification/smoke-20260928-202000.log`（**10/10 PASS**） |
+| Release Gate 未实跑 | 新增 `deploy/run_release_gate.sh`（全层 eval → gate → 落盘） | `artifacts/eval/s10-20260928-200710/`（report.json + gate.json） |
+| CRLF/乱码 | 27 个 tracked 文本文件归一化 LF + `.gitattributes` + vp_pipeline 乱码修复 | commit `cddd1cc` |
+| 工作区风险 | S1–S9 全部成果按子系统分 8 个逻辑 commit 入库；开工前快照分支 `backup/pre-s10-wip` | git log |
+
+### S10 实跑结果（如实记录）
+
+- 全层 eval（`s10-20260928-200710`）：7 层全 ok，131 case = **121 pass / 1 fail / 4 skip / 5 review**，475.9s。
+- agent_e2e 新口径：execution 6/6、**accept 1/6（TEACH-T01，3/3 claim supported）**、review 5/6、supported_claim_rate 0.375、anchor_hit 4/6。视觉回答质量仍未达自动 accept——不作「视觉问答正确」宣称。
+- Release Gate：**fail（记红，不粉饰）**。两条失败均非 S10 引入：
+  1. `core_recall`：recall@20 0.427458→0.426467（−0.001）。逐 case 定位：RET-N01（负例）0.2→0.1，RET-T04 反升 0.23→0.31；审计时基线就 fail 的 BL-T05 维持 fail。
+  2. `unsupported_rate`：verification.hr 0.389→0.458，为 S6/S7 更严验证器的行为变化；两次实跑 hr 在 0.458–0.528 间波动，指标含非确定成分。
+- smoke 自启动实跑：10/10 PASS（首轮 9/10，因固定 subject 撞 duplicate_value——Write Gate 正确行为；改唯一 subject 后通过）。
+
+### 已知遗留（不掩盖）
+
+- `app/api.py` 单文件 1967 行、功能集中——结构性债务，本期不动。
+- api 测试进程退出期偶发 `FATAL: exception not rethrown`（S9-4 已诊断为解释器退出期 C++ 线程拆除竞争；不影响测试结果与退出码）。
+- Release Gate 两条记红项需要后续阶段决定：修 RET-N01 漂移 / 为 hr 阈值口径重估基线。
