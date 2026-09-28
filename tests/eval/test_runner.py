@@ -58,14 +58,14 @@ class TestReportSchema:
 
     def test_control_layer_all_pass(self, report):
         cases = report["layers"]["control"]["cases"]
-        assert len(cases) == 28  # 12 router + 16 policy
+        assert len(cases) == 37  # 21 router (S1-6 froze RT-13..21) + 16 policy
         assert all(c["status"] == "pass" for c in cases)
         assert report["metrics_flat"]["control.pass_rate"] == 1.0
 
     def test_dataset_data_version_recorded(self, report):
         ds = report["layers"]["control"]["datasets"]["router_cases"]
         assert ds["data_version_hash"]
-        assert ds["n_cases"] == 12
+        assert ds["n_cases"] == 21  # RT-01..RT-21
 
 
 class TestSkipSemantics:

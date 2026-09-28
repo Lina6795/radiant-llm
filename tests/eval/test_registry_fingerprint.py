@@ -42,8 +42,9 @@ class TestRegistry:
     def test_specs_unique_and_layered(self):
         names = [s.name for s in DATASETS]
         assert len(names) == len(set(names))
+        # S8: agent_e2e 层加入（真实主链 E2E executor）
         assert {s.layer for s in DATASETS} == {
-            "control", "durable", "retrieval", "context", "memory", "verification"}
+            "control", "durable", "retrieval", "context", "memory", "verification", "agent_e2e"}
         assert {s.name for s in specs_for_layer("control")} == {
             "router_cases", "policy_cases"}
 
@@ -62,7 +63,7 @@ class TestFingerprint:
         path = BENCHMARKS_DIR / "router_cases.jsonl"
         expected = hashlib.sha256(path.read_bytes()).hexdigest()
         assert fp["data_versions"]["router_cases.jsonl"]["sha256"] == expected
-        assert fp["data_versions"]["router_cases.jsonl"]["n_cases"] == 12
+        assert fp["data_versions"]["router_cases.jsonl"]["n_cases"] == 21  # RT-01..RT-21 (S1-6 froze RT-13..21)
 
     def test_fingerprint_hash_stable_within_process(self):
         assert collect_fingerprint()["fingerprint_hash"] == \

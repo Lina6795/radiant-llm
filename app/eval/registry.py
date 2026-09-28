@@ -40,6 +40,22 @@ class DatasetSpec:
 
 DATASETS: tuple[DatasetSpec, ...] = (
     DatasetSpec(
+        name="teaching_case",
+        filename="teaching_case.jsonl",
+        layer="agent_e2e",
+        executor="agent.chain",
+        metric_families=("deterministic", "operational", "judge"),
+        notes="S8: real Agent main chain E2E (TEACH-T01).",
+    ),
+    DatasetSpec(
+        name="visual_gold_cases",
+        filename="visual_gold_cases.jsonl",
+        layer="agent_e2e",
+        executor="agent.chain",
+        metric_families=("deterministic", "operational"),
+        notes="S7/S8: real visual gold cases through the main chain.",
+    ),
+    DatasetSpec(
         name="router_cases",
         filename="router_cases.jsonl",
         layer="control",

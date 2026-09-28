@@ -42,6 +42,7 @@ DEFAULT_VECTOR_STORE = "artifacts/baseline/m0-20260922/output/local_vector_store
 STATUS_PASS = "pass"
 STATUS_FAIL = "fail"
 STATUS_SKIP = "skip"
+STATUS_REVIEW = "review"
 
 
 def ensure_import_paths() -> None:
@@ -55,7 +56,7 @@ def ensure_import_paths() -> None:
 class CaseResult:
     case_id: str
     dataset: str
-    status: str                       # pass | fail | skip
+    status: str                       # pass | fail | skip | review
     metrics: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None       # failure/skip detail
     artifact_uri: Optional[str] = None
@@ -1120,6 +1121,13 @@ def run_verification_layer(
     return results
 
 
+def _run_agent_e2e_layer(datasets, ctx):
+    """S8: the ONLY executor driving the real Agent main chain end to end."""
+    from app.eval.agent_e2e import run_agent_e2e_layer
+
+    return run_agent_e2e_layer(datasets, ctx)
+
+
 # ---------------------------------------------------------------------------
 # Executor dispatch
 # ---------------------------------------------------------------------------
@@ -1133,4 +1141,5 @@ LAYER_EXECUTORS: Dict[
     "context": run_context_layer,
     "memory": run_memory_layer,
     "verification": run_verification_layer,
+    "agent_e2e": _run_agent_e2e_layer,
 }

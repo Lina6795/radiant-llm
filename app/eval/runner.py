@@ -192,8 +192,10 @@ def run_layers(
                 report["metrics_flat"][f"{layer}.{m_name}"] = metric["value"]
         status = layer_report["status"]
         n_pass = sum(1 for c in layer_report["cases"] if c["status"] == "pass")
+        n_review = sum(1 for c in layer_report["cases"] if c["status"] == "review")
         print(f"[eval] {layer}: {status} "
-              f"({n_pass}/{len(layer_report['cases'])} cases pass, "
+              f"({n_pass}/{len(layer_report['cases'])} cases pass"
+              f"{f', {n_review} review' if n_review else ''}, "
               f"{layer_report['duration_s']}s)", flush=True)
 
     report["summary"] = _summary(report)
@@ -212,6 +214,7 @@ def _summary(report: Dict[str, Any]) -> Dict[str, Any]:
         "cases_passed": sum(1 for c in cases if c["status"] == "pass"),
         "cases_failed": sum(1 for c in cases if c["status"] == "fail"),
         "cases_skipped": sum(1 for c in cases if c["status"] == "skip"),
+        "cases_review": sum(1 for c in cases if c["status"] == "review"),
         "duration_s": round(sum(l["duration_s"] or 0 for l in report["layers"].values()), 2),
     }
 
@@ -252,8 +255,9 @@ def render_markdown(report: Dict[str, Any]) -> str:
     lines.append(f"- fingerprint: `{fp['fingerprint_hash']}`")
     lines.append(f"- layers ok/skipped/failed: "
                  f"{s['layers_ok']}/{s['layers_skipped']}/{s['layers_failed']}")
-    lines.append(f"- cases pass/fail/skip: "
-                 f"{s['cases_passed']}/{s['cases_failed']}/{s['cases_skipped']} "
+    lines.append(f"- cases pass/fail/skip/review: "
+                 f"{s['cases_passed']}/{s['cases_failed']}/{s['cases_skipped']}"
+                 f"/{s.get('cases_review', 0)} "
                  f"of {s['cases_total']} in {s['duration_s']}s")
     if report["discovery"]["missing_datasets"]:
         lines.append(f"- missing datasets (skipped): "
