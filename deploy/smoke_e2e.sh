@@ -31,6 +31,16 @@ if [ "${SMOKE_START:-0}" = "1" ]; then
   set +a
   export LD_LIBRARY_PATH="$PWD/runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   export PYTHONUNBUFFERED=1
+  # Evidence KB/DB/vector-store fallback (see run_release_gate.sh): .env may
+  # leave these empty; fall back to the repo-local M0 baseline artifacts.
+  BASELINE_DIR="$PWD/artifacts/baseline/m0-20260922"
+  [ -n "${RADIANT_EVIDENCE_KB_DIR:-}" ] && [ -d "$RADIANT_EVIDENCE_KB_DIR" ] \
+    || export RADIANT_EVIDENCE_KB_DIR="$BASELINE_DIR/output"
+  [ -n "${RADIANT_EVIDENCE_DB:-}" ] && [ -f "$RADIANT_EVIDENCE_DB" ] \
+    || export RADIANT_EVIDENCE_DB="$BASELINE_DIR/evidence.db"
+  [ -n "${RADIANT_VECTOR_STORE:-}" ] && [ -d "$RADIANT_VECTOR_STORE" ] \
+    || export RADIANT_VECTOR_STORE="$BASELINE_DIR/output/local_vector_store"
+  export RADIANT_EVIDENCE_SEARCH_MODE="${RADIANT_EVIDENCE_SEARCH_MODE:-hybrid}"
   PORT="${1:-$($PY -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')}"
   echo "[smoke] SMOKE_START=1: starting temp service on port $PORT" | tee "$LOG"
   (cd app && RADIANT_LLM_PORT="$PORT" "$PY" api.py) > "$SERVER_LOG" 2>&1 &
@@ -60,10 +70,11 @@ else
 fi
 BASE="http://127.0.0.1:${PORT}"
 
-$PY - "$BASE" <<'EOF' 2>&1 | tee -a "$LOG"
+$PY - "$BASE" "$TS" <<'EOF' 2>&1 | tee -a "$LOG"
 import json, sys, time, urllib.request, urllib.error
 
 BASE = sys.argv[1]
+TAG = sys.argv[2]  # unique per invocation so re-runs don't hit duplicate_value
 failures = []
 
 def http(method, path, body=None, ok=(200, 201, 202), timeout=120):
@@ -123,13 +134,14 @@ if run_id:
     check("resume terminal stable", st == 409, str(res.get("detail"))[:80])
 
 # 7. memory write gate + read gate
+smoke_subject = f"smoke-pref-{TAG}"
 st, w = http("POST", "/memories", {
-    "category": "user_fact", "subject": "smoke-pref", "value": "DeepSeek",
+    "category": "user_fact", "subject": smoke_subject, "value": "DeepSeek",
     "workspace": "default", "write_reason": "smoke test", "confidence": 0.95,
-    "user_confirmed": True, "user_confirmation_id": "smoke-1",
-    "provenance": {"origin": "user", "source_session_id": "smoke", "user_confirmation_id": "smoke-1"}})
+    "user_confirmed": True, "user_confirmation_id": f"smoke-{TAG}",
+    "provenance": {"origin": "user", "source_session_id": "smoke", "user_confirmation_id": f"smoke-{TAG}"}})
 check("memory write gate", w.get("outcome") == "allow", str(w.get("outcome")))
-st, r = http("GET", "/memories?q=smoke-pref&workspace=default")
+st, r = http("GET", f"/memories?q={smoke_subject}&workspace=default")
 check("memory read gate", any(x["value"] == "DeepSeek" for x in r.get("records", [])))
 st, denied = http("POST", "/memories", {
     "category": "user_fact", "subject": "smoke-bad", "value": "x",
