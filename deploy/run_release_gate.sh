@@ -25,6 +25,18 @@ set +a
 export LD_LIBRARY_PATH="$PWD/runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PYTHONUNBUFFERED=1
 
+# Evidence KB/DB/vector-store fallback: .env may leave these empty (they were
+# historically inherited from a live service's env). Point at the repo-local
+# M0 baseline ingestion artifacts when unset or nonexistent.
+BASELINE_DIR="$PWD/artifacts/baseline/m0-20260922"
+[ -n "${RADIANT_EVIDENCE_KB_DIR:-}" ] && [ -d "$RADIANT_EVIDENCE_KB_DIR" ] \
+  || export RADIANT_EVIDENCE_KB_DIR="$BASELINE_DIR/output"
+[ -n "${RADIANT_EVIDENCE_DB:-}" ] && [ -f "$RADIANT_EVIDENCE_DB" ] \
+  || export RADIANT_EVIDENCE_DB="$BASELINE_DIR/evidence.db"
+[ -n "${RADIANT_VECTOR_STORE:-}" ] && [ -d "$RADIANT_VECTOR_STORE" ] \
+  || export RADIANT_VECTOR_STORE="$BASELINE_DIR/output/local_vector_store"
+export RADIANT_EVIDENCE_SEARCH_MODE="${RADIANT_EVIDENCE_SEARCH_MODE:-hybrid}"
+
 mkdir -p "$OUT"
 echo "[gate] step 1/2: full-layer eval -> $OUT"
 PYTHONPATH=app "$PY" -m eval.runner --all --out "$OUT" --baseline "$BASELINE" 2>&1 | tee "$OUT/eval.log"
