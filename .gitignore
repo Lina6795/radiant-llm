@@ -4,9 +4,17 @@ Docker_Executable/.env
 # 运行产物
 radiant-llm.pid
 radiant-llm.out.log
+RADIANT_LLM_Logs/
 app/RADIANT_LLM_Logs/
 Docker_Executable/RADIANT_LLM_Logs/
 Docker_Executable/RADIANT_LLM_Sessions/
+
+# 本地运行状态与崩溃转储（不进版本库）
+*.db
+*.db-shm
+*.db-wal
+core
+backups/
 
 # 自动生成
 __pycache__/

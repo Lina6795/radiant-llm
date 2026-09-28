@@ -1,4 +1,4 @@
-# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents. 
+# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents.
 import os
 import matplotlib.pyplot as plt
 from difflib import get_close_matches
@@ -21,7 +21,7 @@ from langchain.chains import RetrievalQAWithSourcesChain
 import webbrowser
 import subprocess
 import datetime as _dt
-import shlex    # For SAM execution 
+import shlex    # For SAM execution
 from tqdm import tqdm  # For SAM execution on cluster
 from langchain_experimental.utilities import PythonREPL
 from langchain_core.prompts import ChatPromptTemplate
@@ -29,7 +29,7 @@ from langchain_core.tools import tool
 from langchain.agents import create_tool_calling_agent, create_openai_tools_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
 
-# Memory capabilities 
+# Memory capabilities
 from langchain.prompts import MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
 from langchain.agents import initialize_agent
@@ -70,7 +70,7 @@ import re
 import time
 import pytesseract
 
-# Dash Components 
+# Dash Components
 import dash
 from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -79,7 +79,7 @@ import dash_bootstrap_components as dbc
 import paramiko
 
 # Custom Utilities
-from utils.general_utilities import GeneralAlerts 
+from utils.general_utilities import GeneralAlerts
 
 
 
@@ -91,7 +91,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module='pydantic')
 # Global variable for external alerts
 # -------------------------------
 global_external_alerts = []  # This list will be updated by your core functions outside callbacks
-# global cb # This is the Chatbot class defined as a global variable 
+# global cb # This is the Chatbot class defined as a global variable
 
 
 
@@ -139,7 +139,7 @@ def PythonREPLTool(
     )
 
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# URL Verification 
+# URL Verification
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 import requests
@@ -164,11 +164,11 @@ def URLValidation(url: str, timeout: int = 5) -> bool:
         # Use a HEAD request to only fetch headers, not the full page content.
         # This is more efficient for simply checking link validity.
         response = requests.head(url, timeout=timeout)
-        
+
         # A status code in the 2xx range indicates success.
         # The 'allow_redirects=True' parameter can be added if you want to follow redirects.
         # response = requests.head(url, timeout=timeout, allow_redirects=True)
-        
+
         return 200 <= response.status_code < 300
     except RequestException as e:
         # Catch any request-related exceptions (e.g., connection errors, timeouts).

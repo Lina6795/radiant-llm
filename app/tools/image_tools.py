@@ -1,4 +1,4 @@
-# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents. 
+# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents.
 import os
 import google.generativeai as genai
 import matplotlib.pyplot as plt
@@ -22,7 +22,7 @@ from langchain.chains import RetrievalQAWithSourcesChain
 import webbrowser
 import subprocess
 import datetime as _dt
-import shlex    # For SAM execution 
+import shlex    # For SAM execution
 from tqdm import tqdm  # For SAM execution on cluster
 from langchain_experimental.utilities import PythonREPL
 from langchain_core.prompts import ChatPromptTemplate
@@ -30,7 +30,7 @@ from langchain_core.tools import tool
 from langchain.agents import create_tool_calling_agent, create_openai_tools_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
 
-# Memory capabilities 
+# Memory capabilities
 from langchain.prompts import MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
 from langchain.agents import initialize_agent
@@ -71,7 +71,7 @@ import re
 import time
 import pytesseract
 
-# Dash Components 
+# Dash Components
 import dash
 from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -83,7 +83,7 @@ import paramiko
 
 
 # Custom Utilities
-from utils.general_utilities import GeneralAlerts 
+from utils.general_utilities import GeneralAlerts
 
 
 #
@@ -112,32 +112,32 @@ os.environ["OPENAI_API_KEY"]       = openai_key
 
 
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# Image Analysis Tool 
+# Image Analysis Tool
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # @tool
 def image_analysis(query: Optional[str],
-                   image_directory: str, 
+                   image_directory: str,
                    chatbot = None,
                    alert_sink: Optional[List] = None) -> Dict[str, List[Dict[str, Any]]]:
-    
+
     """
     Scans a directory, sends any *new* images to GPT-4o for description,
     update a Chroma vector-store + JSON log, and return the descriptions
     that match an optional query.
-    """   
+    """
 
     # ========================== Utilities ========================
     # ************** Image description with Gemini ****************
     def describe_with_gemini(image_path: str, prompt: str = "Describe this image in detail.") -> str:
-        
+
         # Instatiate your model
-        gemini_vision_llm = chatbot.gemini_vision_llm 
+        gemini_vision_llm = chatbot.gemini_vision_llm
 
         image = Image.open(image_path).convert("RGB")
         response = gemini_vision_llm.generate_content([prompt, image])
 
         return response.text
-    
+
     # ************** Image description with GPT ****************
     def describe_with_openai(image_path: str) -> str:
 
@@ -167,7 +167,7 @@ def image_analysis(query: Optional[str],
             return f"ERROR: {e}"
 
 # ==========================End of Utilities ========================
-    
+
     # ─── Path: Initialize the paths  here ───────────────────────
     processed_file   = os.path.join(image_directory, "processed_images.txt")
     output_file      = os.path.join(image_directory, "image_descriptions.json")
@@ -189,7 +189,7 @@ def image_analysis(query: Optional[str],
     # print(f"\nLLM Model: {llm}\n")
 
     # -----------------------------------------------------------------------
-    # Main Loop 
+    # Main Loop
     # -----------------------------------------------------------------------
     # Find images
 
@@ -203,17 +203,17 @@ def image_analysis(query: Optional[str],
     if new_files:
         log.info(f"Processing {len(new_files)} new image(s) …")
         log_message = f"Processing {len(new_files)} new image(s) …"
-        if alert_sink is not None:           
+        if alert_sink is not None:
             GeneralAlerts (alert_sink, log_message, color="success")
 
 
         # global_external_alerts.append(dbc.Alert(f"Processing {len(new_files)} new image(s) …", color="success",
-        #                                  style={ "whiteSpace": "normal", "wordBreak": "break-word", 
+        #                                  style={ "whiteSpace": "normal", "wordBreak": "break-word",
         #                                         "overflowWrap": "break-word", "maxWidth": "200px" }))
     else:
         log.info("No new images detected. Querying vector store only...")
         log_message = f"No new images detected. Now querying the image vector store..."
-        if alert_sink is not None:           
+        if alert_sink is not None:
             GeneralAlerts (alert_sink, log_message, color="success")
 
     # Describe NEW images
@@ -226,10 +226,10 @@ def image_analysis(query: Optional[str],
 
             if llm_type not in ["gpt", "gemini"]:
                 error_message= "Unsupported LLM for image analysis."
-                if alert_sink is not None:           
+                if alert_sink is not None:
                     GeneralAlerts (alert_sink, error_message, color="danger")
                 # global_external_alerts.append(dbc.Alert(error_message, color="danger",
-                #                          style={ "whiteSpace": "normal", "wordBreak": "break-word", 
+                #                          style={ "whiteSpace": "normal", "wordBreak": "break-word",
                 #                                 "overflowWrap": "break-word", "maxWidth": "200px" }))
 
             if llm_type == "gemini":

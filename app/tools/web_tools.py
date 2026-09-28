@@ -1,4 +1,4 @@
-# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents. 
+# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents.
 import os
 import matplotlib.pyplot as plt
 from difflib import get_close_matches
@@ -21,7 +21,7 @@ from langchain.chains import RetrievalQAWithSourcesChain
 import webbrowser
 import subprocess
 import datetime as _dt
-import shlex    # For SAM execution 
+import shlex    # For SAM execution
 from tqdm import tqdm  # For SAM execution on cluster
 from langchain_experimental.utilities import PythonREPL
 from langchain_core.prompts import ChatPromptTemplate
@@ -29,7 +29,7 @@ from langchain_core.tools import tool
 from langchain.agents import create_tool_calling_agent, create_openai_tools_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
 
-# Memory capabilities 
+# Memory capabilities
 from langchain.prompts import MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
 from langchain.agents import initialize_agent
@@ -70,7 +70,7 @@ import re
 import time
 import pytesseract
 
-# Dash Components 
+# Dash Components
 import dash
 from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -79,7 +79,7 @@ import dash_bootstrap_components as dbc
 import paramiko
 
 # Custom Utilities
-from utils.general_utilities import GeneralAlerts 
+from utils.general_utilities import GeneralAlerts
 #
 warnings.filterwarnings("ignore", category=UserWarning, module='pydantic')
 # -------------------------------
@@ -113,7 +113,7 @@ os.environ["OPENAI_API_KEY"]       = openai_key
 ###################################################################################
 
 # @tool
-def web_scraper(url_input: str, 
+def web_scraper(url_input: str,
                alert_sink:List=None) -> str:
     """
     Scrapes the provided web pages for detailed information.
@@ -130,7 +130,7 @@ def web_scraper(url_input: str,
 
     # Show user-facing alert
     alert_message = f"🌐 Searching the web: '{url_input}' …"
-    if alert_sink is not None:           
+    if alert_sink is not None:
         GeneralAlerts (alert_sink, alert_message, color="success")
 
     # Normalize URL input
@@ -217,19 +217,19 @@ def web_scraper(url_input: str,
     )
 
     return output
-   
+
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # Google Search Tool
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # @tool
-def google_search(query: str, 
+def google_search(query: str,
                  num_results: int = 5,
                  alert_sink:List=None) -> str:
     """Run Google search and get top results."""
     # Check if API key and search engine ID are available
     alert_message = f"🌐 Searching Google: '{query}' …"
     # print(alert_message)
-    if alert_sink is not None:           
+    if alert_sink is not None:
         GeneralAlerts (alert_sink, alert_message, color="success")
 
     if not cse_key or not cse_id:
@@ -342,14 +342,14 @@ def web_search(query: str,
 # Wikipedia Search
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # @tool
-def wikipedia_search(query: str, 
+def wikipedia_search(query: str,
                     num_results: int = 10,
                     alert_sink:List=None) -> str:
     """Run Wikipedia search and get page summaries."""
 
     alert_message = f"🌐 Searching Wikipedia: '{query}' …"
     # print(alert_message)
-    if alert_sink is not None:           
+    if alert_sink is not None:
         GeneralAlerts (alert_sink, alert_message, color="success")
 
     try:
@@ -376,5 +376,5 @@ def wikipedia_search(query: str,
         # The upstream wikipedia package can occasionally bubble up raw JSON
         # parsing/network errors; return a tool error string so the agent can recover.
         return f"Error: Unexpected failure while searching Wikipedia: {str(e)}"
-    
+
 # ====================================== End of Tool ==========================================

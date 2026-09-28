@@ -137,7 +137,7 @@ def run_pipeline(config: Optional[ParserConfig] = None) -> Dict:
     }
 
     # -----------------------------------------------------------------------
-    # Step 0 Ã¢â‚¬â€ Discover new PDFs
+    # Step 0 — Discover new PDFs
     # -----------------------------------------------------------------------
     registry_path = os.path.join(output_dir, PROCESSED_REGISTRY)
     new_pdfs      = find_new_pdfs(config.input_dir, rebuild=config.rebuild)
@@ -157,7 +157,7 @@ def run_pipeline(config: Optional[ParserConfig] = None) -> Dict:
     print(f"Found {len(new_pdfs)} new PDF(s). Starting pipeline Ã¢â‚¬Â¦")
 
     # -----------------------------------------------------------------------
-    # Step 0.5 Ã¢â‚¬â€ Metadata extraction (Vision LLM on front pages)
+    # Step 0.5 Metadata extraction (Vision LLM on front pages) 调用视觉 LLM 提取文档元数据
     # -----------------------------------------------------------------------
     _vision_api_key = (
         config.openai_api_key if config.vision_provider == "gpt" else config.gemini_api_key
@@ -184,7 +184,7 @@ def run_pipeline(config: Optional[ParserConfig] = None) -> Dict:
             pdf_meta_map[pdf_path] = {"_error": str(exc)}
 
     # -----------------------------------------------------------------------
-    # Step 1 Ã¢â‚¬â€ Text extraction and chunking
+    # Step 1 Text extraction and chunking 文本提取 + 分块（核心分支：Nougat / Lightweight）
     # -----------------------------------------------------------------------
     if config.text_mode == "nougat":
         print("[Step 1] Running Nougat text extraction ...")
@@ -250,7 +250,7 @@ def run_pipeline(config: Optional[ParserConfig] = None) -> Dict:
     summary["processed_basenames"] = processed_basenames
 
     # -----------------------------------------------------------------------
-    # Step 2 Ã¢â‚¬â€ Figure description (Vision LLM, page-by-page)
+    # Step 2 Figure description (Vision LLM, page-by-page) 图表描述（Vision LLM）
     # -----------------------------------------------------------------------
     pdfs_for_figures = [
         p for p in new_pdfs
@@ -272,7 +272,7 @@ def run_pipeline(config: Optional[ParserConfig] = None) -> Dict:
         print("[Step 2] No PDFs were successfully text-extracted; skipping figure description.")
 
     # -----------------------------------------------------------------------
-    # Step 3 Ã¢â‚¬â€ Write metadata JSONL  (only for successfully processed PDFs)
+    # Step 3 Write metadata JSONL  (only for successfully processed PDFs) 写入文档元数据 JSONL
     # -----------------------------------------------------------------------
     print("[Step 3] Writing document metadata Ã¢â‚¬Â¦")
     processed_set  = set(processed_basenames)
@@ -297,13 +297,13 @@ def run_pipeline(config: Optional[ParserConfig] = None) -> Dict:
         print(f"[Step 3] Wrote {len(metadata_rows)} metadata record(s).")
 
     # -----------------------------------------------------------------------
-    # Step 4 Ã¢â‚¬â€ Persist the processing registry
+    # Step 4 Persist the processing registry 更新注册表，标记 PDF 已处理
     # -----------------------------------------------------------------------
     print("[Step 4] Updating processed-PDFs registry Ã¢â‚¬Â¦")
     mark_as_processed(registry_path, processed_basenames)
 
     # -----------------------------------------------------------------------
-    # Final summary
+    # Final summary 统计输出 & return summary
     # -----------------------------------------------------------------------
     chunks_path  = os.path.join(output_dir, "01_chunks_kb.jsonl")
     figures_path = os.path.join(output_dir, "02_visuals_kb.jsonl")
@@ -316,7 +316,7 @@ def run_pipeline(config: Optional[ParserConfig] = None) -> Dict:
 
     summary["text_chunks_written"] = _count_lines(chunks_path)
     summary["figures_written"]     = _count_lines(figures_path)
-    
+
     print("\n" + "=" * 60)
     print("Visual-Parser Pipeline Complete")
     print(f"  Total PDFs processed  : {len(processed_basenames)}")

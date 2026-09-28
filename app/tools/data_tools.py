@@ -1,4 +1,4 @@
-# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents. 
+# A Vitual Assitant for SAM Users: Based on LLM Augmentation and AI Agents.
 import os
 import matplotlib.pyplot as plt
 from difflib import get_close_matches
@@ -6,7 +6,7 @@ import warnings
 
 # Additional imports for LangChain agent setup
 import datetime as _dt
-import shlex    # For SAM execution 
+import shlex    # For SAM execution
 from tqdm import tqdm  # For SAM execution on cluster
 from langchain_experimental.utilities import PythonREPL
 from langchain_core.prompts import ChatPromptTemplate
@@ -14,7 +14,7 @@ from langchain_core.tools import tool
 from langchain.agents import create_tool_calling_agent, create_openai_tools_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
 
-# Memory capabilities 
+# Memory capabilities
 from langchain.prompts import MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
 from langchain.agents import initialize_agent
@@ -59,7 +59,7 @@ from cgi import parse_header
 # Custom Tools
 
 # Custom Utilities
-from utils.general_utilities import GeneralAlerts 
+from utils.general_utilities import GeneralAlerts
 from utils.general_utilities import get_osti_pdf_link
 
 #
@@ -100,7 +100,7 @@ def csv_excel_reader(
     Parameters:
         working_directory (str): Path to the directory containing files.
         file_name (str, optional): Name of the CSV/Excel file. If omitted, picks the first one found.
-        include_all_rows (bool): If True (depending on user query), returns ALL rows under 'all_rows' 
+        include_all_rows (bool): If True (depending on user query), returns ALL rows under 'all_rows'
         — this could be huge, so only do it when explicitly requested bu the user.
         alert_sink (list, optional): A place to send alerts instead of printing.
 
@@ -156,7 +156,7 @@ def csv_excel_reader(
         return {"error": f"There was an error parsing the file '{file_name}'."}
     except Exception as e:
         return {"error": f"An unexpected error occurred: {e}"}
-    
+
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # Unified Text File Reader Tool
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -227,9 +227,9 @@ def text_file_reader(file_path: str, alert_sink: Optional[List] = None) -> str:
         if alert_sink is not None:
             GeneralAlerts(alert_sink, message, color="warning")
         return f"[Error] An unexpected error occurred: {e}"
-    
+
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# Tool to download any file from a web url 
+# Tool to download any file from a web url
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 def file_downloader(url_input: str | list[str],
                     working_directory: str,
@@ -239,7 +239,7 @@ def file_downloader(url_input: str | list[str],
     the working directory. Automatically fixes OSTI links to point at the real PDF.
     """
     from utils.general_utilities import get_osti_pdf_link
-    
+
     Path(working_directory).mkdir(parents=True, exist_ok=True)
 
     # unify to a list
@@ -315,7 +315,7 @@ def CSVDataFinder(working_directory: str,
                 ) -> str:
     """
     Q&A over a CSV/Excel in a directory using cb.llm_model (MANDATORY).
-    
+
     - If file_name is None, auto-picks the only .csv/.xls/.xlsx in working_directory.
     - Else reads working_directory/file_name (you may omit the extension).
     - Returns a plain string (agent answer or error).
