@@ -17,7 +17,11 @@ cd "$(dirname "$0")/.."
 PY="runtime/bin/python"
 RUN_ID="${1:-s10-$(date +%Y%m%d-%H%M%S)}"
 OUT="artifacts/eval/$RUN_ID"
-BASELINE="artifacts/eval/m8-baseline-20260922/report.json"
+# Gate baseline: M8 is the historical default; S11 comparable runs must
+# point RADIANT_GATE_BASELINE at a versioned s11-baseline-* directory
+# (legacy reports without comparability metadata now yield
+# baseline_incompatible by design).
+BASELINE="${RADIANT_GATE_BASELINE:-artifacts/eval/m8-baseline-20260922/report.json}"
 
 set -a
 [ -f Docker_Executable/.env ] && . Docker_Executable/.env
