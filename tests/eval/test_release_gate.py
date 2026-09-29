@@ -15,10 +15,30 @@ def _case(case_id: str, status: str = "pass") -> dict:
             "trace_uri": None, "latency_ms": 1.0, "config_fingerprint": "fp"}
 
 
+def _compat_block() -> dict:
+    """The S11-A comparability metadata a v2 report must carry."""
+    return {
+        "metric_schema_version": "radiant-eval-metrics/v2",
+        "evaluator_version": "eval-harness/v2",
+        "dataset_digest": "ds-digest-1",
+        "random_seed": 0,
+        "config_fingerprint": {
+            "layer_evaluator_versions": {
+                "control": "control-exec/v1", "durable": "durable-exec/v1",
+                "retrieval": "retrieval-exec/v2", "context": "context-exec/v1",
+                "memory": "memory-exec/v1"},
+            "retrieval": {"config_fingerprint": "ret-fp-1"},
+            "verification": {"config_fingerprint": "ver-fp-1"},
+            "evidence_store": {"content_digest": "ev-digest-1"},
+            "vector_store": {"content_digest": "vs-digest-1"},
+        },
+    }
+
+
 def _report(run_id: str = "run") -> dict:
     """A minimal but complete report that must pass the gate vs itself."""
-    return {
-        "schema_version": "radiant-eval-report/v1",
+    report = {
+        "schema_version": "radiant-eval-report/v2",
         "run_id": run_id,
         "metrics_flat": {
             "retrieval.recall@20": 0.9,
@@ -38,6 +58,8 @@ def _report(run_id: str = "run") -> dict:
             "memory": {"status": "ok", "cases": [_case("MEM-01")], "metrics": {}},
         },
     }
+    report.update(_compat_block())
+    return report
 
 
 def _failed_rules(result: dict) -> list[dict]:

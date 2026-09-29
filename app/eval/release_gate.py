@@ -107,6 +107,71 @@ def _cases(report: Dict[str, Any], layer: str) -> List[Dict[str, Any]]:
 # Rules
 # ---------------------------------------------------------------------------
 
+def _compat_value(report: Dict[str, Any], key: str) -> Any:
+    if key in report:
+        return report[key]
+    return (report.get("config_fingerprint") or {}).get(key)
+
+
+def _rule_baseline_compatibility(current: Dict[str, Any], baseline: Dict[str, Any],
+                                 config: GateConfig) -> List[RuleResult]:
+    """S11-A: regression comparisons are only meaningful when both reports
+    share metric schema, evaluator versions, frozen datasets, pipeline
+    configs and corpus content. Any missing or mismatched field makes the
+    pair ``baseline_incompatible`` (fail-closed): metric drift between
+    incomparable runs must NOT be reported as an ordinary regression."""
+    del config
+    incompatible: List[str] = []
+    for key in ("metric_schema_version", "evaluator_version",
+                "dataset_digest", "random_seed"):
+        base, cur = _compat_value(baseline, key), _compat_value(current, key)
+        if base is None or cur is None:
+            incompatible.append(f"{key} (baseline={base!r}, current={cur!r}: missing)")
+        elif base != cur:
+            incompatible.append(f"{key} (baseline={base!r} != current={cur!r})")
+
+    base_fp = baseline.get("config_fingerprint") or {}
+    cur_fp = current.get("config_fingerprint") or {}
+    base_layers = base_fp.get("layer_evaluator_versions") or {}
+    cur_layers = cur_fp.get("layer_evaluator_versions") or {}
+    shared = sorted(set(current.get("layers", {})) & set(baseline.get("layers", {})))
+    for layer in shared:
+        b, c = base_layers.get(layer), cur_layers.get(layer)
+        if b is None or c is None:
+            incompatible.append(
+                f"layer_evaluator_versions.{layer} (baseline={b!r}, current={c!r}: missing)")
+        elif b != c:
+            incompatible.append(
+                f"layer_evaluator_versions.{layer} (baseline={b!r} != current={c!r})")
+    for section in ("retrieval", "verification"):
+        b = (base_fp.get(section) or {}).get("config_fingerprint")
+        c = (cur_fp.get(section) or {}).get("config_fingerprint")
+        if b is None or c is None:
+            incompatible.append(f"{section}.config_fingerprint "
+                                f"(baseline={b!r}, current={c!r}: missing)")
+        elif b != c:
+            incompatible.append(f"{section}.config_fingerprint "
+                                f"(baseline={b!r} != current={c!r})")
+    for store in ("evidence_store", "vector_store"):
+        b = (base_fp.get(store) or {}).get("content_digest")
+        c = (cur_fp.get(store) or {}).get("content_digest")
+        if b is None and c is None:
+            continue  # both sides store-less: nothing to pin
+        if b != c:
+            incompatible.append(f"{store}.content_digest "
+                                f"(baseline={b!r} != current={c!r})")
+
+    if incompatible:
+        return [RuleResult(
+            "baseline_compatibility", RULE_FAIL,
+            "baseline_incompatible: " + "; ".join(incompatible),
+            threshold="all comparability fields must match")]
+    return [RuleResult(
+        "baseline_compatibility", RULE_PASS,
+        "metric schema, evaluator versions, dataset digest, pipeline "
+        "configs and corpus digests all match")]
+
+
 def _rule_core_recall(current: Dict[str, Any], baseline: Dict[str, Any],
                       config: GateConfig) -> List[RuleResult]:
     results = []
@@ -263,6 +328,15 @@ _RULES = (
     _rule_layer_status,
 )
 
+# Rules that compare metrics against the baseline and are therefore
+# meaningless (and suppressed) when the pair is baseline_incompatible.
+# Integrity and judge-audit rules inspect the candidate alone and always run.
+_BASELINE_COMPARISON_RULES = {
+    _rule_core_recall: "core_recall",
+    _rule_unsupported: "unsupported_rate",
+    _rule_layer_status: "layer_status",
+}
+
 
 def evaluate_gate(
     current: Dict[str, Any],
@@ -271,8 +345,15 @@ def evaluate_gate(
 ) -> Dict[str, Any]:
     """Run every gate rule; overall pass iff no rule fails."""
     config = config or GateConfig()
-    rules: List[RuleResult] = []
+    rules: List[RuleResult] = _rule_baseline_compatibility(current, baseline, config)
+    compatible = all(r.status != RULE_FAIL for r in rules)
     for rule_fn in _RULES:
+        if not compatible and rule_fn in _BASELINE_COMPARISON_RULES:
+            rules.append(RuleResult(
+                _BASELINE_COMPARISON_RULES[rule_fn], RULE_SKIP,
+                "baseline_incompatible: regression comparison suppressed; "
+                "metric drift between incomparable reports is not a verdict"))
+            continue
         rules.extend(rule_fn(current, baseline, config))
     verdict = "pass" if all(r.status != RULE_FAIL for r in rules) else "fail"
     return {

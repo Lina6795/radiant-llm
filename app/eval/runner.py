@@ -53,8 +53,12 @@ from eval.registry import (  # noqa: E402
     load_cases,
     specs_for_layer,
 )
+from eval.versions import (  # noqa: E402
+    LAYER_EVALUATOR_VERSIONS,
+    REPORT_SCHEMA_VERSION,
+)
 
-SCHEMA_VERSION = "radiant-eval-report/v1"
+SCHEMA_VERSION = REPORT_SCHEMA_VERSION
 DEFAULT_OUT_ROOT = Path("artifacts/eval")
 
 
@@ -112,6 +116,10 @@ def run_layers(
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "metric_schema_version": fingerprint["metric_schema_version"],
+        "evaluator_version": fingerprint["evaluator_version"],
+        "dataset_digest": fingerprint["dataset_digest"],
+        "random_seed": fingerprint["random_seed"],
         "config_fingerprint": fingerprint,
         "discovery": {
             "unregistered_files": discovery["unregistered_files"],
@@ -129,6 +137,7 @@ def run_layers(
         layer_report: Dict[str, Any] = {
             "status": "ok", "skip_reason": None, "datasets": {},
             "cases": [], "metrics": {}, "duration_s": None,
+            "evaluator_version": LAYER_EVALUATOR_VERSIONS.get(layer),
         }
         specs = specs_for_layer(layer)
         present: Dict[DatasetSpec, List[dict]] = {}
