@@ -170,7 +170,8 @@ check("dashboard links control-chat", st == 200 and "/control-chat/" in dash, f"
 print("---")
 print("SMOKE", "FAILED" if failures else "OK", failures or "")
 sys.exit(1 if failures else 0)
-EOFsmoke_rc=$?
+EOF
+smoke_rc=$?
 echo "[smoke] log: $LOG"
 [ -n "$SERVER_PID" ] && echo "[smoke] server log: $SERVER_LOG (temp service stopped)"
 exit $smoke_rc
