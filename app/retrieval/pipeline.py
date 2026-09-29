@@ -31,6 +31,12 @@ FUSION_INTERLEAVE = "interleave"
 FUSION_RRF = "rrf"
 
 
+def _lane_trace(candidates: List[Candidate], k: int) -> List[Dict[str, Any]]:
+    """Per-record Top-K trace (evidence_id, score, rank, lane provenance,
+    filter/gate bookkeeping) so every stage of every case is auditable."""
+    return [c.to_trace() for c in candidates[:k]]
+
+
 @dataclass
 class RetrievalConfig:
     name: str = "custom"
@@ -84,6 +90,7 @@ class RetrievalPipeline:
                 "latency_ms": round((time.perf_counter() - t0) * 1000, 3),
                 "candidates": len(lists["bm25"]),
                 "top_scores": [round(c.score, 6) for c in lists["bm25"][:5]],
+                "top_k": _lane_trace(lists["bm25"], cfg.recall_k),
             }
         if cfg.use_dense:
             if self.dense_retriever is None:
@@ -94,6 +101,7 @@ class RetrievalPipeline:
                 "latency_ms": round((time.perf_counter() - t0) * 1000, 3),
                 "candidates": len(lists["dense"]),
                 "top_scores": [round(c.score, 6) for c in lists["dense"][:5]],
+                "top_k": _lane_trace(lists["dense"], cfg.recall_k),
             }
         return lists
 
@@ -124,6 +132,7 @@ class RetrievalPipeline:
             "method": cfg.fusion,
             "rrf_k": cfg.rrf_k if cfg.fusion == FUSION_RRF else None,
             "candidates": len(fused),
+            "top_k": _lane_trace(fused, cfg.final_top_k),
         }
 
         t0 = time.perf_counter()
@@ -144,6 +153,7 @@ class RetrievalPipeline:
             "proxy_notice": ("token-overlap PROXY, not a cross-encoder"
                              if cfg.rerank.enabled else None),
             "candidates": len(reranked),
+            "top_k": _lane_trace(reranked, cfg.final_top_k),
         }
 
         t0 = time.perf_counter()
