@@ -149,11 +149,28 @@ st, denied = http("POST", "/memories", {
     "provenance": {"origin": "model", "evidence_id": "ev-fake"}})
 check("memory evidence-as-fact rejected", denied.get("outcome") == "reject", str(denied.get("reasons")))
 
+# 8. control-chat frontend (S11-E/F): route, assets, dashboard entry
+def http_text(path, timeout=15):
+    try:
+        with urllib.request.urlopen(BASE + path, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")
+    except Exception as exc:
+        return -1, f"{type(exc).__name__}: {exc}"
+
+st, html = http_text("/control-chat/")
+check("control-chat page", st == 200 and "app.js" in html and "style.css" in html, f"http {st}")
+st, js = http_text("/control-chat/app.js")
+check("control-chat assets", st == 200 and "/runs" in js and "/stream-query" not in js,
+      f"http {st}")
+st, dash = http_text("/dashboard/")
+check("dashboard links control-chat", st == 200 and "/control-chat/" in dash, f"http {st}")
+
 print("---")
 print("SMOKE", "FAILED" if failures else "OK", failures or "")
 sys.exit(1 if failures else 0)
-EOF
-smoke_rc=$?
+EOFsmoke_rc=$?
 echo "[smoke] log: $LOG"
 [ -n "$SERVER_PID" ] && echo "[smoke] server log: $SERVER_LOG (temp service stopped)"
 exit $smoke_rc

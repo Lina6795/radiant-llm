@@ -1919,6 +1919,21 @@ if _DASHBOARD_DIR.is_dir():
     app.mount("/dashboard", StaticFiles(directory=str(_DASHBOARD_DIR), html=True), name="dashboard")
 
 
+# ---------------------------------------------------------------------------
+# S11-E: governed-chain chat frontend (vanilla JS, no build step)
+# ---------------------------------------------------------------------------
+
+_CONTROL_CHAT_DIR = Path(__file__).resolve().parent / "control-chat-static"
+if _CONTROL_CHAT_DIR.is_dir():
+    @app.get("/control-chat", include_in_schema=False)
+    def control_chat_redirect():
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url="/control-chat/")
+
+    app.mount("/control-chat", StaticFiles(directory=str(_CONTROL_CHAT_DIR), html=True), name="control-chat")
+
+
 # Serve built React frontend if present (used in Docker image)
 # IMPORTANT: Mount static files LAST so API routes take precedence
 def resolveFrontendDist() -> Path | None:

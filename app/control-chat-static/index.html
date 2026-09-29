@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RADIANT-Control 受控链聊天</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>RADIANT-Control <span class="muted">受控链聊天</span></h1>
+  <nav>
+    <a href="/dashboard/">Dashboard</a>
+    <a href="/dashboard/#reviews">审核队列</a>
+  </nav>
+  <span id="run-pill" class="pill pill-idle">空闲</span>
+</header>
+
+<div id="status-bar" class="status-bar hidden" role="status"></div>
+
+<div class="layout">
+  <aside id="history-panel">
+    <div class="history-head">
+      <h2>历史 Runs</h2>
+      <button id="history-refresh" type="button">刷新</button>
+    </div>
+    <ul id="history-list" class="history-list"></ul>
+  </aside>
+
+  <main class="main">
+    <section id="chat-area" class="chat-area" aria-label="对话区"></section>
+
+    <section id="router-panel" class="router-panel hidden" aria-label="路由结果">
+      <h3>路由结果</h3>
+      <div id="router-body"></div>
+    </section>
+
+    <section id="chain-panel" class="chain-panel hidden" aria-label="受控链过程">
+      <h3>受控链 <span id="chain-run-id" class="muted"></span></h3>
+      <ol id="chain-steps" class="chain-steps"></ol>
+    </section>
+
+    <section id="verify-panel" class="verify-panel hidden" aria-label="可信度与引用">
+      <h3>可信度与引用 <span id="verify-action" class="pill"></span></h3>
+      <div id="claim-counts" class="claim-counts"></div>
+      <ul id="claim-list" class="claim-list"></ul>
+    </section>
+
+    <section id="controls-panel" class="controls hidden" aria-label="运行控制">
+      <button id="btn-cancel" type="button">Cancel</button>
+      <button id="btn-resume" type="button">Resume</button>
+      <button id="btn-refresh" type="button">刷新快照</button>
+      <a id="goto-review" class="btn hidden" href="/dashboard/#reviews">前往审核</a>
+    </section>
+
+    <section id="timeline-panel" class="timeline-panel hidden" aria-label="事件时间线">
+      <h3>事件时间线</h3>
+      <ul id="timeline" class="timeline"></ul>
+    </section>
+
+    <form id="ask-form" class="ask-form">
+      <input id="goal-input" type="text" autocomplete="off"
+             placeholder="输入你的问题（回车发送）" required>
+      <button id="btn-send" type="submit">发送</button>
+    </form>
+  </main>
+</div>
+
+<div id="evidence-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="证据详情">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="evidence-title">证据详情</h3>
+      <button id="evidence-close" type="button">关闭</button>
+    </div>
+    <div id="evidence-body" class="modal-body"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
