@@ -1931,6 +1931,14 @@ if _CONTROL_CHAT_DIR.is_dir():
 
         return RedirectResponse(url="/control-chat/")
 
+    @app.get("/control", include_in_schema=False)
+    def control_redirect():
+        """Typing /control must not fall through to the legacy frontend
+        catch-all; send the user to the governed-chain chat."""
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url="/control-chat/")
+
     app.mount("/control-chat", StaticFiles(directory=str(_CONTROL_CHAT_DIR), html=True), name="control-chat")
 
 

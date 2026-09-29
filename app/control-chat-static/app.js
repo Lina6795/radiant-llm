@@ -9,13 +9,62 @@
   "use strict";
 
   var STEP_DEFS = [
-    { id: "s1-search", label: "search" },
-    { id: "s2-inspect", label: "inspect" },
-    { id: "s3-context", label: "context" },
-    { id: "s4-draft", label: "draft" },
-    { id: "s5-verify", label: "verify" }
+    { id: "s1-search", label: "检索 search" },
+    { id: "s2-inspect", label: "检视 inspect" },
+    { id: "s3-context", label: "上下文 context" },
+    { id: "s4-draft", label: "起草 draft" },
+    { id: "s5-verify", label: "核验 verify" }
   ];
   var TERMINAL_STATES = { succeeded: true, failed: true, cancelled: true };
+
+  var RUN_STATE_LABELS = {
+    loading: "加载中",
+    running: "运行中",
+    waiting_review: "等待人工审核",
+    succeeded: "已完成",
+    failed: "已失败",
+    cancelled: "已取消"
+  };
+  var STEP_STATE_LABELS = {
+    pending: "等待",
+    running: "运行中",
+    success: "成功",
+    succeeded: "成功",
+    skipped: "已跳过",
+    retry: "重试中",
+    failed: "失败",
+    waiting_review: "等待审核"
+  };
+  var ACTION_LABELS = {
+    accept: "自动接受",
+    revise: "已修订",
+    review: "人工审核",
+    clarify: "需要澄清",
+    abstain: "已弃答"
+  };
+  var VERDICT_LABELS = {
+    supported: "支持",
+    unsupported: "未支持",
+    conflicted: "冲突",
+    out_of_scope: "超出范围"
+  };
+
+  function runStateLabel(state) {
+    return RUN_STATE_LABELS[state] || state || "空闲";
+  }
+
+  function stepStateLabel(state) {
+    return STEP_STATE_LABELS[state] || state || "等待";
+  }
+
+  function actionLabel(action) {
+    if (!action || action === "unknown") return "未知";
+    return (ACTION_LABELS[action] || action) + "（" + action + "）";
+  }
+
+  function verdictLabel(verdict) {
+    return VERDICT_LABELS[verdict] || "其他";
+  }
 
   var els = {
     runPill: document.getElementById("run-pill"),
@@ -96,7 +145,7 @@
   }
 
   function setRunPill(state) {
-    els.runPill.textContent = state || "空闲";
+    els.runPill.textContent = runStateLabel(state);
     els.runPill.className = "pill pill-" + (state || "idle");
   }
 
@@ -109,7 +158,7 @@
     els.goalInput.disabled = busy;
     els.btnSend.disabled = busy;
     if (busy) {
-      showStatus("run 进行中（" + currentRunId + "），完成前无法发送新提问。", false);
+      showStatus("当前 run 进行中（" + currentRunId + "），完成前无法发送新提问。", false);
     } else if (!els.statusBar.classList.contains("hidden") &&
                els.statusBar.classList.contains("info")) {
       hideStatus();
@@ -182,7 +231,7 @@
     STEP_DEFS.forEach(function (def) {
       var li = el("li", "step st-pending");
       li.appendChild(el("span", "s-name", def.label));
-      li.appendChild(el("span", "s-state", "pending"));
+      li.appendChild(el("span", "s-state", "等待"));
       var extra = el("span", "s-extra", "");
       li.appendChild(extra);
       els.chainSteps.appendChild(li);
@@ -206,14 +255,14 @@
     if (!entry) return;
     var cls = STATE_CLASS[state] || "st-pending";
     entry.root.className = "step " + cls;
-    entry.state.textContent = state;
+    entry.state.textContent = stepStateLabel(state);
     entry.extra.textContent = extraText || "";
   }
 
   function applySnapshotSteps(steps) {
     (steps || []).forEach(function (step) {
       var extra = "";
-      if (step.attempt > 1) extra = "attempt " + step.attempt;
+      if (step.attempt > 1) extra = "第 " + step.attempt + " 次尝试";
       if (step.error) extra = (extra ? extra + " · " : "") + truncate(step.error, 60);
       setStepState(step.step_id, step.state || "pending", extra);
     });
@@ -226,11 +275,11 @@
   function renderVerifyOutput(output) {
     els.verifyPanel.classList.remove("hidden");
     var action = output.verify_action || "unknown";
-    els.verifyAction.textContent = action;
+    els.verifyAction.textContent = actionLabel(action);
     els.verifyAction.className = "pill pill-" +
       (action === "accept" ? "succeeded" : action === "abstain" ? "failed" : "waiting_review");
     if (output.revise_used) {
-      els.verifyAction.textContent = action + "（已修订）";
+      els.verifyAction.textContent = actionLabel(action) + " · 经过一次修订";
     }
 
     var claims = Array.isArray(output.claims) ? output.claims : [];
@@ -241,8 +290,8 @@
       else counts.other += 1;
     });
     clearChildren(els.claimCounts);
-    els.claimCounts.appendChild(el("span", "cc", "supported: " + counts.supported));
-    els.claimCounts.appendChild(el("span", "cc", "unsupported: " + counts.unsupported));
+    els.claimCounts.appendChild(el("span", "cc", "支持: " + counts.supported));
+    els.claimCounts.appendChild(el("span", "cc", "未支持: " + counts.unsupported));
     els.claimCounts.appendChild(el("span", "cc", "其他: " + counts.other));
 
     clearChildren(els.claimList);
@@ -252,7 +301,7 @@
         : verdict === "unsupported" ? "v-unsupported"
         : verdict === "conflicted" ? "v-conflicted" : "v-other";
       var li = el("li", "claim " + cls);
-      li.appendChild(el("span", "c-verdict", verdict));
+      li.appendChild(el("span", "c-verdict", verdictLabel(verdict)));
       li.appendChild(el("span", "c-text", claim.text || claim.claim || ""));
       var ids = Array.isArray(claim.evidence_ids) ? claim.evidence_ids : [];
       if (ids.length) {
@@ -317,17 +366,17 @@
   function summarizeEvent(type, data) {
     var step = data.step_id ? data.step_id + " " : "";
     switch (type) {
-      case "run_started": return "goal: " + truncate(data.goal || "", 80);
-      case "node_started": return step + "tool=" + (data.tool || "?") + " attempt=" + (data.attempt || 1);
-      case "node_completed": return step + "latency=" + (data.latency_ms != null ? data.latency_ms + "ms" : "?");
-      case "node_retried": return step + "attempt=" + (data.attempt || "?");
+      case "run_started": return "目标: " + truncate(data.goal || "", 80);
+      case "node_started": return step + "工具=" + (data.tool || "?") + " 第" + (data.attempt || 1) + "次尝试";
+      case "node_completed": return step + "耗时=" + (data.latency_ms != null ? data.latency_ms + "ms" : "?");
+      case "node_retried": return step + "第" + (data.attempt || "?") + "次尝试";
       case "node_failed": return step + truncate(data.error || "", 80);
       case "node_skipped": return step + (data.reason || "");
-      case "waiting_review": return step + "tool=" + (data.tool || "?") + " risk=" + (data.risk || "?");
-      case "run_completed": return "tools_executed=" + (data.tools_executed != null ? data.tools_executed : "?");
+      case "waiting_review": return step + "工具=" + (data.tool || "?") + " 风险=" + (data.risk || "?");
+      case "run_completed": return "已执行工具数=" + (data.tools_executed != null ? data.tools_executed : "?");
       case "run_failed": return step + truncate(data.error || data.status || "", 80);
-      case "run_cancelled": return "cancelled_steps=" + (data.cancelled_steps != null ? data.cancelled_steps : "?");
-      case "run_resumed": return "restored_steps=" + (data.restored_steps != null ? data.restored_steps : "?");
+      case "run_cancelled": return "已取消步骤数=" + (data.cancelled_steps != null ? data.cancelled_steps : "?");
+      case "run_resumed": return "已恢复步骤数=" + (data.restored_steps != null ? data.restored_steps : "?");
       case "binding_resolved": return step + truncate(data.binding || data.name || "", 60);
       default:
         try { return truncate(JSON.stringify(data), 100); } catch (e) { return ""; }
@@ -361,11 +410,11 @@
     eventSource = es;
 
     var nodeState = {
-      node_started: ["running", function (d) { return "attempt " + (d.attempt || 1); }],
+      node_started: ["running", function (d) { return "第 " + (d.attempt || 1) + " 次尝试"; }],
       node_completed: ["success", function (d) {
         return d.latency_ms != null ? d.latency_ms + "ms" : "";
       }],
-      node_retried: ["retry", function (d) { return "attempt " + (d.attempt || "?"); }],
+      node_retried: ["retry", function (d) { return "第 " + (d.attempt || "?") + " 次尝试"; }],
       node_failed: ["failed", function (d) { return truncate(d.error || "", 60); }],
       node_skipped: ["skipped", function (d) { return d.reason || ""; }],
       waiting_review: ["waiting_review", function (d) { return d.tool || ""; }]
@@ -465,7 +514,7 @@
       if (output.answer && renderedOutcomeFor !== currentRunId) {
         renderedOutcomeFor = currentRunId;
         addBubble("agent", output.answer,
-          "run " + shortId(currentRunId) + " · " + (output.verify_action || ""));
+          "run " + shortId(currentRunId) + " · " + actionLabel(output.verify_action));
       }
     }
     if (currentState === "failed" && renderedOutcomeFor !== currentRunId) {
@@ -600,10 +649,10 @@
       })
       .catch(function (err) {
         if (err.status === 409) {
-          reportError("Resume 被拒绝（run 已处于终态）", err);
+          reportError("恢复请求被拒绝（该 run 已处于终态）", err);
           refreshSnapshot();
         } else {
-          reportError("Resume 失败", err);
+          reportError("恢复运行失败", err);
         }
       });
   }
@@ -624,7 +673,7 @@
         var li = el("li", "history-item");
         li.appendChild(el("span", "h-goal", truncate(item.goal || "(无 goal)", 60)));
         var meta = el("span", "h-meta",
-          shortId(item.run_id) + " · " + (item.state || "?") + " · " +
+          shortId(item.run_id) + " · " + runStateLabel(item.state) + " · " +
           truncate(item.updated_at || "", 19).replace("T", " "));
         li.appendChild(meta);
         li.addEventListener("click", function () {
@@ -644,7 +693,7 @@
   els.askForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
     if (isBusy()) {
-      showStatus("run 进行中（" + currentRunId + "），请等待完成或先取消。", true);
+      showStatus("当前 run 进行中（" + currentRunId + "），请等待完成或先取消。", true);
       return;
     }
     var goal = els.goalInput.value.trim();

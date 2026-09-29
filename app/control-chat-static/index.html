@@ -10,7 +10,7 @@
 <header class="topbar">
   <h1>RADIANT-Control <span class="muted">受控链聊天</span></h1>
   <nav>
-    <a href="/dashboard/">Dashboard</a>
+    <a href="/dashboard/">运维面板</a>
     <a href="/dashboard/#reviews">审核队列</a>
   </nav>
   <span id="run-pill" class="pill pill-idle">空闲</span>
@@ -21,7 +21,7 @@
 <div class="layout">
   <aside id="history-panel">
     <div class="history-head">
-      <h2>历史 Runs</h2>
+      <h2>历史运行</h2>
       <button id="history-refresh" type="button">刷新</button>
     </div>
     <ul id="history-list" class="history-list"></ul>
@@ -47,8 +47,8 @@
     </section>
 
     <section id="controls-panel" class="controls hidden" aria-label="运行控制">
-      <button id="btn-cancel" type="button">Cancel</button>
-      <button id="btn-resume" type="button">Resume</button>
+      <button id="btn-cancel" type="button">取消运行</button>
+      <button id="btn-resume" type="button">恢复运行</button>
       <button id="btn-refresh" type="button">刷新快照</button>
       <a id="goto-review" class="btn hidden" href="/dashboard/#reviews">前往审核</a>
     </section>

@@ -16,6 +16,12 @@ def test_control_chat_pages_served(client):
     assert resp.status_code in (301, 302, 307, 308)
     assert resp.headers["location"].endswith("/control-chat/")
 
+    # /control must redirect too -- otherwise it falls through to the
+    # legacy frontend catch-all and shows the old English UI
+    resp = client.get("/control", follow_redirects=False)
+    assert resp.status_code in (301, 302, 307, 308)
+    assert resp.headers["location"].endswith("/control-chat/")
+
     resp = client.get("/control-chat/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
