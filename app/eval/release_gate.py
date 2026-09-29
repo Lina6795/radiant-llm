@@ -5,9 +5,13 @@ pass/fail with per-rule detail:
 
 1. ``core_recall`` -- core Recall metrics must not regress beyond a
    configurable threshold (default 0.0, i.e. no regression at all).
-2. ``unsupported_rate`` -- unsupported-claim rate (HR) must not rise
-   beyond a configurable threshold. Fail-closed: a metric measured in
-   the baseline but unmeasured in the candidate fails the rule.
+2. ``unsupported_rate`` -- the FINAL COMMITTED answer's unsupported-claim
+   rate (``verification.final_committed_unsupported_rate``) must not rise
+   beyond a configurable threshold. Fail-closed: a metric measured in the
+   baseline but unmeasured in the candidate fails the rule. The legacy
+   draft-level ``verification.hr`` mixes the verifier-as-observer signal
+   with generator sampling and is NOT gate-comparable across verifier
+   versions (S11-C); it is kept in reports for diagnostics only.
 3. ``integrity`` -- isolation / idempotency / recovery tests must all
    pass: every durable (recovery/idempotency) and memory (workspace
    isolation) case, plus the context isolation/red-line cases. A skipped
@@ -54,7 +58,7 @@ class GateConfig:
     ])
     recall_max_drop: float = 0.0
     unsupported_metrics: List[str] = field(default_factory=lambda: [
-        "verification.hr",
+        "verification.final_committed_unsupported_rate",
     ])
     unsupported_max_increase: float = 0.0
     integrity_all_pass_layers: List[str] = field(default_factory=lambda: [

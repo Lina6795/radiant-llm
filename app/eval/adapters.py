@@ -960,6 +960,87 @@ def _run_visual_cases(
     return ds
 
 
+def _aggregate_answer_metrics(rows: List[Dict[str, Any]],
+                              cases: List[Dict[str, Any]]) -> Dict[str, MetricResult]:
+    """Dataset-level metrics for the B2 answer arm.
+
+    S11-C semantics, deliberately separate families:
+
+    * detected (draft risk, verifier as observer):
+      ``detected_unsupported_rate`` -- gate-time unsupported share of the
+      draft claims. Legacy ``unsupported_rate``/``hr`` are kept unchanged
+      for history but are NOT gate-comparable across verifier versions.
+    * committed (final answer quality):
+      ``final_committed_unsupported_rate`` -- unsupported share measured
+      only over answers that were actually committed to the user
+      (verification_action commit / retrieve_more). human_review /
+      clarify / abstain commit nothing and are excluded.
+    * outcome rates: ``review_rate`` / ``accept_rate`` over decided cases.
+    """
+    metrics: Dict[str, MetricResult] = {}
+
+    def col(key: str) -> List[Optional[float]]:
+        return [r.get(key) for r in rows]
+
+    metrics["claim_support_rate"] = _metric("claim_support_rate", col("support_rate"))
+    metrics["citation_precision"] = _metric("citation_precision", col("citation_precision"))
+    metrics["citation_coverage"] = _metric("citation_coverage", col("citation_coverage"))
+    metrics["numeric_accuracy"] = _metric("numeric_accuracy", col("numeric_accuracy"))
+    metrics["unsupported_rate"] = _metric("unsupported_rate", col("unsupported_rate"))
+    hr = metrics["unsupported_rate"]
+    metrics["hr"] = MetricResult(  # legacy: paper HR over committed-draft
+        name="hr", value=hr.value, status=hr.status, kind=hr.kind,
+        n_cases=hr.n_cases, reason=hr.reason)
+    metrics["fact_recall"] = _metric("fact_recall", col("fact_recall"))
+
+    # --- S11-C: detected vs committed ------------------------------------
+    metrics["detected_unsupported_rate"] = _metric(
+        "detected_unsupported_rate", col("detected_unsupported_rate"))
+    committed_rows = [r for r in rows if r.get("committed")]
+    metrics["final_committed_unsupported_rate"] = _metric(
+        "final_committed_unsupported_rate",
+        [r.get("unsupported_rate") for r in committed_rows])
+    metrics["supported_claim_rate"] = _metric("supported_claim_rate", col("support_rate"))
+
+    decided = [r for r in rows if r.get("verification_action")]
+    metrics["review_rate"] = _metric(
+        "review_rate",
+        [1.0 if r["verification_action"] == "human_review" else 0.0
+         for r in decided])
+    metrics["accept_rate"] = _metric(
+        "accept_rate",
+        [1.0 if r["verification_action"] == "commit" else 0.0
+         for r in decided])
+
+    escalated = [bool(r.get("escalated")) for r in rows]
+    gold = [bool(r.get("gold_escalate")) for r in rows]
+    tp = sum(1 for e, g in zip(escalated, gold) if e and g)
+    fp = sum(1 for e, g in zip(escalated, gold) if e and not g)
+    fn = sum(1 for e, g in zip(escalated, gold) if not e and g)
+    metrics["escalation_precision"] = MetricResult(
+        name="escalation_precision",
+        value=round(tp / (tp + fp), 4) if tp + fp else None,
+        status="measured" if tp + fp else "not_measured",
+        kind="deterministic", n_cases=len(rows),
+        reason=None if tp + fp else "no_escalations")
+    metrics["escalation_recall"] = MetricResult(
+        name="escalation_recall",
+        value=(round(tp / (tp + fn), 4) if tp + fn
+               else (None if any(gold) else 1.0)),
+        status="measured" if (tp + fn or not any(gold)) else "not_measured",
+        kind="deterministic", n_cases=len(rows),
+        reason=None if (tp + fn or not any(gold)) else "gold_escalations_missed")
+    refusal_correct = sum(
+        1 for case, r in zip(cases, rows)
+        if case["category"] == "refusal"
+        and (r.get("refused") or r.get("answer") is None))
+    metrics["refusal_cases_correct"] = MetricResult(
+        name="refusal_cases_correct", value=float(refusal_correct),
+        status="measured", kind="deterministic",
+        n_cases=sum(1 for c in cases if c["category"] == "refusal"))
+    return metrics
+
+
 def _run_answer_cases(
     spec: DatasetSpec, cases: List[dict], ctx: LayerContext
 ) -> DatasetResult:
@@ -1047,50 +1128,14 @@ def _run_answer_cases(
                 "retrieval_rounds": out.get("retrieval_rounds"),
                 "escalated": out.get("escalated"),
                 "verification_action": out.get("verification_action"),
+                "committed": out.get("committed"),
+                "detected_unsupported_rate": out.get("detected_unsupported_rate"),
             },
             error=error, trace_uri=artifact,
             latency_ms=out.get("latency_ms"),
             config_fingerprint=ctx.fingerprint_hash))
 
-    def col(key: str) -> List[Optional[float]]:
-        return [r.get(key) for r in rows]
-
-    ds.metrics["claim_support_rate"] = _metric("claim_support_rate", col("support_rate"))
-    ds.metrics["citation_precision"] = _metric("citation_precision", col("citation_precision"))
-    ds.metrics["citation_coverage"] = _metric("citation_coverage", col("citation_coverage"))
-    ds.metrics["numeric_accuracy"] = _metric("numeric_accuracy", col("numeric_accuracy"))
-    ds.metrics["unsupported_rate"] = _metric("unsupported_rate", col("unsupported_rate"))
-    hr = ds.metrics["unsupported_rate"]
-    ds.metrics["hr"] = MetricResult(  # paper HR: unsupported claims / total claims
-        name="hr", value=hr.value, status=hr.status, kind=hr.kind,
-        n_cases=hr.n_cases, reason=hr.reason)
-    ds.metrics["fact_recall"] = _metric("fact_recall", col("fact_recall"))
-    escalated = [bool(r.get("escalated")) for r in rows]
-    gold = [bool(r.get("gold_escalate")) for r in rows]
-    tp = sum(1 for e, g in zip(escalated, gold) if e and g)
-    fp = sum(1 for e, g in zip(escalated, gold) if e and not g)
-    fn = sum(1 for e, g in zip(escalated, gold) if not e and g)
-    ds.metrics["escalation_precision"] = MetricResult(
-        name="escalation_precision",
-        value=round(tp / (tp + fp), 4) if tp + fp else None,
-        status="measured" if tp + fp else "not_measured",
-        kind="deterministic", n_cases=len(rows),
-        reason=None if tp + fp else "no_escalations")
-    ds.metrics["escalation_recall"] = MetricResult(
-        name="escalation_recall",
-        value=(round(tp / (tp + fn), 4) if tp + fn
-               else (None if any(gold) else 1.0)),
-        status="measured" if (tp + fn or not any(gold)) else "not_measured",
-        kind="deterministic", n_cases=len(rows),
-        reason=None if (tp + fn or not any(gold)) else "gold_escalations_missed")
-    refusal_correct = sum(
-        1 for case, r in zip(cases, rows)
-        if case["category"] == "refusal"
-        and (r.get("refused") or r.get("answer") is None))
-    ds.metrics["refusal_cases_correct"] = MetricResult(
-        name="refusal_cases_correct", value=float(refusal_correct),
-        status="measured", kind="deterministic",
-        n_cases=sum(1 for c in cases if c["category"] == "refusal"))
+    ds.metrics.update(_aggregate_answer_metrics(rows, cases))
     return ds
 
 

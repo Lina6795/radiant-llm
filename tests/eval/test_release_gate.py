@@ -105,15 +105,15 @@ class TestRecallRejects:
 class TestUnsupportedRejects:
     def test_unsupported_rise_fails(self):
         baseline, current = _report("a"), _report("b")
-        baseline["metrics_flat"]["verification.hr"] = 0.1
-        current["metrics_flat"]["verification.hr"] = 0.2
+        baseline["metrics_flat"]["verification.final_committed_unsupported_rate"] = 0.1
+        current["metrics_flat"]["verification.final_committed_unsupported_rate"] = 0.2
         result = evaluate_gate(current, baseline)
         assert result["gate"] == "fail"
         assert any(r["rule"] == "unsupported_rate" for r in _failed_rules(result))
 
     def test_unsupported_unmeasured_in_current_fails_closed(self):
         baseline = _report("a")
-        baseline["metrics_flat"]["verification.hr"] = 0.1
+        baseline["metrics_flat"]["verification.final_committed_unsupported_rate"] = 0.1
         result = evaluate_gate(_report("b"), baseline)
         assert result["gate"] == "fail"
 

@@ -100,11 +100,21 @@ class TestAnswerB2Arm:
         ds = run_verification_layer({spec: load_cases(spec)}, ctx)["answer_cases"]
         for name in ("claim_support_rate", "citation_precision",
                      "citation_coverage", "unsupported_rate", "hr",
-                     "fact_recall", "escalation_precision"):
+                     "fact_recall", "escalation_precision",
+                     "detected_unsupported_rate",
+                     "final_committed_unsupported_rate",
+                     "supported_claim_rate", "review_rate", "accept_rate"):
             assert ds.metrics[name].status == "measured", name
-        # HR is the unsupported-rate alias the release gate watches.
+        # legacy hr remains the unsupported-rate alias (diagnostics only;
+        # the gate watches final_committed_unsupported_rate since S11-C)
         assert ds.metrics["hr"].value == ds.metrics["unsupported_rate"].value
         assert 0.0 <= ds.metrics["hr"].value <= 1.0
+        # review answers must never be counted as committed
+        for case in ds.cases:
+            if case.metrics["verification_action"] == "human_review":
+                assert case.metrics["committed"] is False
+        rates = ds.metrics
+        assert rates["review_rate"].value + rates["accept_rate"].value <= 1.0
 
     def test_b2_cases_traceable_to_run_and_verdict(self, ctx, stubbed_llm):
         spec = get_spec("answer_cases")
@@ -116,6 +126,10 @@ class TestAnswerB2Arm:
             assert case.metrics["verification_action"] in (
                 "commit", "retrieve_more", "human_review", "abstain")
             assert case.metrics["claims"] and case.metrics["claims"] >= 1
+            assert isinstance(case.metrics["committed"], bool)
+            action = case.metrics["verification_action"]
+            assert case.metrics["committed"] == (
+                action in ("commit", "retrieve_more"))
 
     def test_refusal_cases_measured(self, ctx, stubbed_llm):
         spec = get_spec("answer_cases")

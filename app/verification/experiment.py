@@ -437,7 +437,18 @@ def run_b2(case, stores, registry, evidence_by_id, pipeline, llm_log,
            "retrieval_rounds": retrieval_rounds,
            "verification": json.loads(decision.model_dump_json()),
            "escalated": decision.action is VerificationAction.HUMAN_REVIEW,
-           "restored_steps": resumed.resume.restored_steps}
+           "restored_steps": resumed.resume.restored_steps,
+           # S11-C: gate-time semantics, recorded separately from the
+           # measure_arm re-verify below. ``detected_unsupported_rate`` is
+           # the verifier-observed draft risk; ``committed`` marks whether
+           # this action would deliver the answer to the user (commit /
+           # retrieve_more) -- human_review / clarify / abstain commit
+           # nothing, so they must never count as accepted answers.
+           "gate_claims": len(claims),
+           "detected_unsupported_rate": (round(len(decision.unsupported) / len(claims), 4)
+                                         if claims else None),
+           "committed": decision.action in (VerificationAction.COMMIT,
+                                            VerificationAction.RETRIEVE_MORE)}
     out.update(measure_arm(final, evidence, case))
     return out
 
