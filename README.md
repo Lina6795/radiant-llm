@@ -81,6 +81,7 @@ curl http://127.0.0.1:8080/health    # {"status":"ok"}
 ```
 
 - **Operations Dashboard**：<http://127.0.0.1:8080/dashboard/>（Runs / Evidence / Reviews / Benchmarks，纯静态页，无需构建）
+- **受控链聊天（S11-E）**：<http://127.0.0.1:8080/control-chat/>——面向用户的受控 Agent 对话页：提问走 `POST /runs` 进受控五步链，SSE 实时展示节点事件与 claim 级核验结果，引用可点开查看证据原文。与旧前端的区别：旧 React dist 走 legacy 流式链（无 checkpoint/无核验），受控聊天只走受控链，路由拒绝时明示而非静默回退。
 - 对话前端（React dist）：<http://127.0.0.1:8080/>
 - API 文档（OpenAPI）：<http://127.0.0.1:8080/docs>
 
@@ -113,14 +114,22 @@ curl -N http://127.0.0.1:8080/runs/<run_id>/events  # SSE 事件流
 ./runtime/bin/python3.12 -m pytest tests/api -q      # M9 API 层
 ```
 
-## 评测回归（M8）
+## 评测回归（M8/S11）
 
 ```bash
-PYTHONPATH=app ./runtime/bin/python3.12 -m eval.runner --all \
-  --out artifacts/eval/<run_id> --baseline artifacts/eval/m8-baseline-20260922
+# 一键：全层 eval + fail-closed Release Gate（自含 .env 加载与证据库回退）
+bash deploy/run_release_gate.sh <run_id>
+
+# 对 S11 可比基线做同口径回归（S11-D 建立；M8 基线因语料/评估器版本漂移
+# 已被 Gate 判为 baseline_incompatible，仅保留作历史证据）
+RADIANT_GATE_BASELINE=artifacts/eval/s11-baseline-20260929/report.json \
+  bash deploy/run_release_gate.sh <run_id>
 ```
 
 也可在 Dashboard 的 Benchmarks 页或 `POST /benchmarks/run` 触发。
+Gate 产物：`artifacts/eval/<run_id>/report.json`（逐 case 指标 + trace 链接）、
+`gate.json`（逐规则 pass/fail/skip）；基线清单：`artifacts/eval/s11-baseline-20260929/baseline_manifest.json`。
+端到端冒烟（自启动临时服务，输出留档）：`SMOKE_START=1 bash deploy/smoke_e2e.sh`。
 
 ## 目录速览
 
@@ -132,5 +141,6 @@ PYTHONPATH=app ./runtime/bin/python3.12 -m eval.runner --all \
 | `app/verification/` | 声明核验与 M7 人工 Review 队列 |
 | `app/eval/` | M8 评测框架与 release gate |
 | `app/dashboard-static/` | M9 运维 Dashboard（原生 JS，无构建） |
-| `deploy/` | 备份/恢复脚本 |
+| `app/control-chat-static/` | S11 受控链聊天前端（原生 JS，无构建，只走受控链） |
+| `deploy/` | 备份/恢复脚本 + 一键评测门禁（run_release_gate.sh）+ 冒烟（smoke_e2e.sh） |
 | `docs/` | 契约与设计文档（API、状态机、评测等） |
